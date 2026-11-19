@@ -33,7 +33,6 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
   String _myPublicKey = '';
   List<SecretContact> _contacts = [];
   bool _isLoading = true;
-  bool _showMyQrCard = false;
 
   @override
   void initState() {
@@ -73,7 +72,6 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
     final List<SecretContact> loaded = [];
 
     if (isDecoy) {
-      // In Duress / Decoy PIN mode, display harmless arcade tournament bot contacts only!
       loaded.addAll([
         SecretContact(
           contactId: 'SP-100-200',
@@ -111,7 +109,6 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
       } catch (_) {}
     }
 
-    // If user previously had a legacy pairToken saved, include it automatically
     final legacyToken = await _keystore.getPairToken();
     if (legacyToken != null &&
         legacyToken.isNotEmpty &&
@@ -141,14 +138,12 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
       });
     }
 
-    // Register this device's SecretPlay ID & public key in Cloudflare directory so partners can message us even while offline!
     RelayDirectoryService.registerIdentity(
       deviceId: deviceId,
       secretNumber: myNumber,
       publicKeyBase64: pubKey,
     );
 
-    // Check for any published app update
     if (mounted) {
       final isFa = ref.read(appLocaleProvider) == AppLang.fa;
       RelayDirectoryService.checkAndPromptUpdate(context, isFa: isFa);
@@ -173,7 +168,7 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            s.tr('این شناسه متعلق به خود شماست! شناسه مخاطب را وارد کنید.', 'That is your own SecretPlay ID!'),
+            s.tr('این شناسه متعلق به خود شماست!', 'That is your own SecretPlay ID!'),
           ),
         ),
       );
@@ -246,11 +241,18 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
 
     if (!mounted) return;
     await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => PrivateChatScreen(activeContact: contact),
+      PageRouteBuilder(
+        transitionDuration: const Duration(milliseconds: 220),
+        pageBuilder: (_, __, ___) => PrivateChatScreen(activeContact: contact),
+        transitionsBuilder: (_, animation, __, child) {
+          return SlideTransition(
+            position: Tween<Offset>(begin: const Offset(0.08, 0), end: Offset.zero)
+                .animate(CurvedAnimation(parent: animation, curve: Curves.easeOut)),
+            child: FadeTransition(opacity: animation, child: child),
+          );
+        },
       ),
     );
-    // Refresh contact list after returning from chat
     await _initMyIdentityAndContacts();
   }
 
@@ -304,16 +306,83 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
     );
   }
 
+  void _showMyQrPassModal(S s, String myQrPayload) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Directionality(
+        textDirection: s.dir,
+        child: Container(
+          padding: const EdgeInsets.all(24),
+          decoration: const BoxDecoration(
+            color: Color(0xFF131624),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+            border: Border(top: BorderSide(color: Color(0xFF00FFA3), width: 1.5)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                s.tr('کارت دیجیتال و شناسه SecretPlay شما', 'Your SecretPlay Digital Pass'),
+                style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF00FFA3).withOpacity(0.35),
+                      blurRadius: 20,
+                    ),
+                  ],
+                ),
+                child: QrImageView(
+                  data: myQrPayload,
+                  version: QrVersions.auto,
+                  size: 185,
+                ),
+              ),
+              const SizedBox(height: 14),
+              SelectableText(
+                _mySecretNumber,
+                style: const TextStyle(
+                  color: Color(0xFF00FFA3),
+                  fontSize: 22,
+                  fontWeight: FontWeight.w900,
+                  fontFamily: 'monospace',
+                  letterSpacing: 1.5,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                s.tr(
+                  'دوستتان با اسکن این کد یا زدن این شماره مستقیم با شما رمزنگاری می‌شود',
+                  'Share this ID or let your partner scan this QR to connect instantly',
+                ),
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white54, fontSize: 12),
+              ),
+              const SizedBox(height: 16),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   void _showAddContactModal(S s) {
     showDialog(
       context: context,
       builder: (ctx) => Directionality(
         textDirection: s.dir,
         child: AlertDialog(
-          backgroundColor: const Color(0xFF16161D),
+          backgroundColor: const Color(0xFF131624),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-            side: const BorderSide(color: Color(0xFF64D2FF)),
+            borderRadius: BorderRadius.circular(22),
+            side: const BorderSide(color: Color(0xFF00E5FF)),
           ),
           title: Row(
             children: [
@@ -321,7 +390,7 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  s.tr('افزودن یا جستجوی مخاطب با شناسه', 'Add / Find Contact by ID'),
+                  s.tr('افزودن مخاطب با شناسه', 'Add Contact by ID'),
                   style: const TextStyle(color: Colors.white, fontSize: 16),
                 ),
               ),
@@ -339,13 +408,13 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
                   fontFamily: 'monospace',
                 ),
                 decoration: InputDecoration(
-                  labelText: s.tr('شناسه اختصاصی مخاطب (مثل شماره تلفن)', 'Partner SecretPlay ID'),
+                  labelText: s.tr('شناسه اختصاصی مخاطب', 'Partner SecretPlay ID'),
                   hintText: 'SP-742-918',
                   labelStyle: const TextStyle(color: Colors.white70, fontSize: 12),
                   hintStyle: const TextStyle(color: Colors.white24),
                   filled: true,
-                  fillColor: const Color(0xFF1E1E26),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  fillColor: const Color(0xFF0B0D16),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
                 ),
               ),
               const SizedBox(height: 12),
@@ -353,13 +422,13 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
                 controller: _aliasController,
                 style: const TextStyle(color: Colors.white),
                 decoration: InputDecoration(
-                  labelText: s.tr('نام دلخواه مخاطب (اختیاری)', 'Contact Nickname (Optional)'),
-                  hintText: s.tr('مثلاً: علی، سارا، دوست صمیمی...', 'e.g. Alex, Partner...'),
+                  labelText: s.tr('نام دلخواه مخاطب (اختیاری)', 'Nickname (Optional)'),
+                  hintText: s.tr('مثلاً: علی، سارا...', 'e.g. Alex, Partner...'),
                   labelStyle: const TextStyle(color: Colors.white70, fontSize: 12),
                   hintStyle: const TextStyle(color: Colors.white24, fontSize: 12),
                   filled: true,
-                  fillColor: const Color(0xFF1E1E26),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  fillColor: const Color(0xFF0B0D16),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
                 ),
               ),
             ],
@@ -371,14 +440,7 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
             ),
             ElevatedButton.icon(
               icon: const Icon(Icons.chat_bubble_rounded, size: 18),
-              label: Text(
-                s.tr('افزودن و شروع گفتگو', 'Add & Open Chat'),
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF00FFA3),
-                foregroundColor: Colors.black,
-              ),
+              label: Text(s.tr('شروع گفتگو', 'Start Chat')),
               onPressed: () {
                 final raw = _searchOrAddIdController.text.trim();
                 final alias = _aliasController.text.trim();
@@ -392,6 +454,18 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
         ),
       ),
     );
+  }
+
+  List<Color> _avatarGradientFor(String id) {
+    final hash = id.codeUnits.fold<int>(0, (a, b) => a + b);
+    const palettes = [
+      [Color(0xFF00FFA3), Color(0xFF00B8D4)],
+      [Color(0xFFFF007A), Color(0xFF7928CA)],
+      [Color(0xFF00E5FF), Color(0xFF2979FF)],
+      [Color(0xFFFFB800), Color(0xFFFF3D00)],
+      [Color(0xFFBF5AF2), Color(0xFF5E5CE6)],
+    ];
+    return palettes[hash % palettes.length];
   }
 
   @override
@@ -421,8 +495,9 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
     return Directionality(
       textDirection: s.dir,
       child: Scaffold(
-        backgroundColor: Colors.black,
+        backgroundColor: const Color(0xFF07080D),
         appBar: AppBar(
+          backgroundColor: const Color(0xFF0D0F18),
           leading: IconButton(
             icon: const Icon(Icons.lock_rounded, color: Color(0xFFFF453A)),
             tooltip: s.tr('قفل فوری و بازگشت به بازی', 'Lock & Return to Game'),
@@ -435,51 +510,63 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
             },
           ),
           title: Text(
-            s.tr('مخاطبین و شناسه من', 'Contacts & My Secret ID'),
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            s.tr('SecretPlay • پیام‌رسان امن', 'SecretPlay • Secure Vault'),
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
           ),
           actions: [
             IconButton(
-              icon: const Icon(Icons.qr_code_scanner_rounded, color: Colors.amber),
-              tooltip: s.tr('اسکن QR مخاطب', 'Scan Partner QR'),
+              icon: const Icon(Icons.qr_code_scanner_rounded, color: Color(0xFFFFB800)),
+              tooltip: s.tr('اسکن QR مخاطب', 'Scan QR'),
               onPressed: _scanContactQr,
             ),
             IconButton(
-              icon: const Icon(Icons.router_rounded, color: Color(0xFF64D2FF)),
-              tooltip: s.tr('تنظیمات شبکه', 'Network Mode'),
-              onPressed: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const NetworkModeScreen()),
-                );
-              },
-            ),
-            IconButton(
               icon: const Icon(Icons.system_update_rounded, color: Color(0xFF00FFA3)),
-              tooltip: s.tr('بررسی آپدیت جدید', 'Check for Updates'),
+              tooltip: s.tr('بررسی آپدیت جدید', 'Updates'),
               onPressed: () => RelayDirectoryService.checkAndPromptUpdate(
                 context,
                 isFa: s.isFa,
                 manualCheck: true,
               ),
             ),
-            IconButton(
-              icon: const Icon(Icons.security_rounded, color: Colors.white70),
-              tooltip: s.tr('تنظیمات امنیتی', 'Security Settings'),
-              onPressed: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const SecuritySettingsScreen()),
-                );
+            PopupMenuButton<String>(
+              icon: const Icon(Icons.more_vert_rounded, color: Colors.white70),
+              color: const Color(0xFF171A26),
+              onSelected: (v) {
+                if (v == 'lang') {
+                  ref.read(appLocaleProvider.notifier).toggleLanguage();
+                } else if (v == 'net') {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const NetworkModeScreen()),
+                  );
+                } else if (v == 'sec') {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const SecuritySettingsScreen()),
+                  );
+                }
               },
-            ),
-            TextButton(
-              onPressed: () => ref.read(appLocaleProvider.notifier).toggleLanguage(),
-              child: Text(
-                s.isFa ? 'EN' : 'فا',
-                style: const TextStyle(
-                  color: Color(0xFFFFD60A),
-                  fontWeight: FontWeight.bold,
+              itemBuilder: (_) => [
+                PopupMenuItem(
+                  value: 'lang',
+                  child: Text(
+                    s.isFa ? '🌐 Switch to English' : '🌐 تغییر زبان به فارسی',
+                    style: const TextStyle(color: Colors.white),
+                  ),
                 ),
-              ),
+                PopupMenuItem(
+                  value: 'net',
+                  child: Text(
+                    s.tr('📡 حالت شبکه (کلودفلر / لوکال)', '📡 Network Mode'),
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'sec',
+                  child: Text(
+                    s.tr('🛡️ تنظیمات امنیتی و پین فریبنده', '🛡️ Security & Duress PIN'),
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -488,314 +575,273 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
           foregroundColor: Colors.black,
           icon: const Icon(Icons.person_add_alt_1_rounded),
           label: Text(
-            s.tr('پیام به شناسه جدید', 'Message New ID'),
-            style: const TextStyle(fontWeight: FontWeight.bold),
+            s.tr('مخاطب جدید', 'New Chat'),
+            style: const TextStyle(fontWeight: FontWeight.w800),
           ),
           onPressed: () => _showAddContactModal(s),
         ),
         body: _isLoading
             ? const Center(child: CircularProgressIndicator())
             : SafeArea(
-                child: ListView(
-                  padding: const EdgeInsets.all(16),
+                child: Column(
                   children: [
-                    // My Unique Phone-like SecretPlay ID Card
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          colors: [Color(0xFF141E30), Color(0xFF243B55)],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: const Color(0xFF00FFA3).withOpacity(0.55)),
-                      ),
-                      child: Column(
-                        children: [
-                          Row(
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.all(10),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFF00FFA3).withOpacity(0.15),
-                                  shape: BoxShape.circle,
-                                ),
-                                child: const Icon(
-                                  Icons.badge_rounded,
-                                  color: Color(0xFF00FFA3),
-                                  size: 26,
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      s.tr(
-                                        'شناسه اختصاصی شما (شماره SecretPlay)',
-                                        'Your Personal SecretPlay Number',
-                                      ),
-                                      style: const TextStyle(color: Colors.white70, fontSize: 11),
-                                    ),
-                                    const SizedBox(height: 3),
-                                    SelectableText(
-                                      _mySecretNumber,
-                                      style: const TextStyle(
-                                        color: Color(0xFF00FFA3),
-                                        fontSize: 22,
-                                        fontWeight: FontWeight.bold,
-                                        letterSpacing: 1.5,
-                                        fontFamily: 'monospace',
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.copy_rounded, color: Colors.white),
-                                tooltip: s.tr('کپی شناسه من', 'Copy My ID'),
-                                onPressed: () {
-                                  Clipboard.setData(ClipboardData(text: _mySecretNumber));
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text(
-                                        s.tr(
-                                          'شناسه $_mySecretNumber کپی شد! برای دوستتان بفرستید.',
-                                          'ID $_mySecretNumber copied!',
-                                        ),
-                                      ),
-                                    ),
-                                  );
-                                },
-                              ),
-                              IconButton(
-                                icon: Icon(
-                                  _showMyQrCard ? Icons.expand_less : Icons.qr_code_2_rounded,
-                                  color: const Color(0xFF64D2FF),
-                                  size: 28,
-                                ),
-                                tooltip: s.tr('نمایش QR اختصاصی من', 'Show My QR Card'),
-                                onPressed: () => setState(() => _showMyQrCard = !_showMyQrCard),
-                              ),
-                            ],
+                    // Sleek My Secret ID Pill Banner
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF141B30), Color(0xFF1C2847)],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
                           ),
-                          if (_showMyQrCard) ...[
-                            const Divider(color: Colors.white24, height: 24),
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(color: const Color(0xFF00FFA3).withOpacity(0.4)),
+                        ),
+                        child: Row(
+                          children: [
                             Container(
-                              padding: const EdgeInsets.all(12),
+                              width: 42,
+                              height: 42,
                               decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(16),
+                                shape: BoxShape.circle,
+                                color: const Color(0xFF00FFA3).withOpacity(0.15),
                               ),
-                              child: QrImageView(
-                                data: myQrPayload,
-                                version: QrVersions.auto,
-                                size: 170,
+                              child: const Icon(Icons.fingerprint_rounded, color: Color(0xFF00FFA3)),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    s.tr('شناسه اختصاصی شما', 'Your SecretPlay ID'),
+                                    style: const TextStyle(color: Colors.white60, fontSize: 11),
+                                  ),
+                                  SelectableText(
+                                    _mySecretNumber,
+                                    style: const TextStyle(
+                                      color: Color(0xFF00FFA3),
+                                      fontSize: 19,
+                                      fontWeight: FontWeight.w900,
+                                      fontFamily: 'monospace',
+                                      letterSpacing: 1.2,
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
-                            const SizedBox(height: 8),
-                            Text(
-                              s.tr(
-                                'دوست شما با اسکن این QR مستقیماً شما را به مخاطبینش اضافه می‌کند',
-                                'Partner can scan this QR to add your ID & public key instantly',
+                            IconButton(
+                              icon: const Icon(Icons.copy_rounded, color: Colors.white70, size: 20),
+                              onPressed: () {
+                                Clipboard.setData(ClipboardData(text: _mySecretNumber));
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(s.tr('شناسه $_mySecretNumber کپی شد!', 'Copied!')),
+                                  ),
+                                );
+                              },
+                            ),
+                            IconButton(
+                              icon: const Icon(
+                                Icons.qr_code_2_rounded,
+                                color: Color(0xFF00E5FF),
+                                size: 26,
                               ),
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(color: Colors.white70, fontSize: 11),
+                              onPressed: () => _showMyQrPassModal(s, myQrPayload),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                    // Direct Dial / Search Input
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _searchOrAddIdController,
+                              onChanged: (_) => setState(() {}),
+                              onSubmitted: (val) {
+                                if (val.trim().isNotEmpty) {
+                                  _addOrOpenContact(rawId: val);
+                                }
+                              },
+                              style: const TextStyle(color: Colors.white, fontSize: 14),
+                              decoration: InputDecoration(
+                                prefixIcon: const Icon(Icons.search_rounded, color: Color(0xFF00E5FF)),
+                                hintText: s.tr(
+                                  'شماره SecretPlay مخاطب را بزنید (مثلاً SP-742-918)...',
+                                  'Enter ID (e.g. SP-742-918) or search...',
+                                ),
+                                hintStyle: const TextStyle(color: Colors.white38, fontSize: 12),
+                                filled: true,
+                                fillColor: const Color(0xFF131624),
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(16),
+                                  borderSide: BorderSide.none,
+                                ),
+                              ),
+                            ),
+                          ),
+                          if (_searchOrAddIdController.text.trim().isNotEmpty) ...[
+                            const SizedBox(width: 8),
+                            ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF00E5FF),
+                                foregroundColor: Colors.black,
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                              ),
+                              onPressed: () => _addOrOpenContact(rawId: _searchOrAddIdController.text),
+                              child: Text(s.tr('چت', 'Go')),
                             ),
                           ],
                         ],
                       ),
                     ),
-                    const SizedBox(height: 16),
 
-                    // Instant Direct ID Input / Search Bar
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: _searchOrAddIdController,
-                            onChanged: (_) => setState(() {}),
-                            onSubmitted: (val) {
-                              if (val.trim().isNotEmpty) {
-                                _addOrOpenContact(rawId: val);
-                              }
-                            },
-                            style: const TextStyle(color: Colors.white),
-                            decoration: InputDecoration(
-                              prefixIcon: const Icon(Icons.dialpad_rounded, color: Color(0xFF64D2FF)),
-                              hintText: s.tr(
-                                'شناسه مخاطب را وارد کنید (مثلاً SP-742-918)...',
-                                'Enter partner ID (e.g. SP-742-918) to chat...',
+                    const SizedBox(height: 8),
+
+                    // Contacts List
+                    Expanded(
+                      child: filteredContacts.isEmpty
+                          ? Center(
+                              child: Padding(
+                                padding: const EdgeInsets.all(28.0),
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.forum_outlined,
+                                      color: Colors.white.withOpacity(0.14),
+                                      size: 64,
+                                    ),
+                                    const SizedBox(height: 12),
+                                    Text(
+                                      s.tr(
+                                        'هنوز گفتگویی ندارید.\nشماره SecretPlay دوستتان را بالا وارد کنید یا دکمه «مخاطب جدید» را بزنید.',
+                                        'No chats yet.\nEnter your partner\'s SecretPlay ID above or tap New Chat.',
+                                      ),
+                                      textAlign: TextAlign.center,
+                                      style: const TextStyle(color: Colors.white54, fontSize: 13),
+                                    ),
+                                  ],
+                                ),
                               ),
-                              hintStyle: const TextStyle(color: Colors.white38, fontSize: 12),
-                              filled: true,
-                              fillColor: const Color(0xFF181820),
-                              contentPadding:
-                                  const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(14),
-                                borderSide: BorderSide.none,
-                              ),
+                            )
+                          : ListView.builder(
+                              padding: const EdgeInsets.fromLTRB(16, 4, 16, 84),
+                              itemCount: filteredContacts.length,
+                              itemBuilder: (context, index) {
+                                final contact = filteredContacts[index];
+                                final grad = _avatarGradientFor(contact.contactId);
+                                final initial = contact.alias.isNotEmpty
+                                    ? contact.alias.characters.first.toUpperCase()
+                                    : 'S';
+                                final hasKey = contact.peerPublicKey != null &&
+                                    contact.peerPublicKey!.isNotEmpty;
+
+                                return Container(
+                                  margin: const EdgeInsets.only(bottom: 10),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF131624),
+                                    borderRadius: BorderRadius.circular(18),
+                                    border: Border.all(
+                                      color: hasKey
+                                          ? const Color(0xFF00FFA3).withOpacity(0.28)
+                                          : Colors.white.withOpacity(0.07),
+                                    ),
+                                  ),
+                                  child: InkWell(
+                                    borderRadius: BorderRadius.circular(18),
+                                    onTap: () => _openChatWithContact(contact),
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 14, vertical: 12),
+                                      child: Row(
+                                        children: [
+                                          Container(
+                                            width: 48,
+                                            height: 48,
+                                            decoration: BoxDecoration(
+                                              shape: BoxShape.circle,
+                                              gradient: LinearGradient(colors: grad),
+                                            ),
+                                            child: Center(
+                                              child: Text(
+                                                initial,
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 20,
+                                                  fontWeight: FontWeight.w800,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 12),
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  contact.alias,
+                                                  style: const TextStyle(
+                                                    color: Colors.white,
+                                                    fontSize: 15,
+                                                    fontWeight: FontWeight.w700,
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 3),
+                                                Row(
+                                                  children: [
+                                                    Text(
+                                                      contact.contactId,
+                                                      style: const TextStyle(
+                                                        color: Color(0xFF00E5FF),
+                                                        fontSize: 12,
+                                                        fontFamily: 'monospace',
+                                                      ),
+                                                    ),
+                                                    const SizedBox(width: 8),
+                                                    Icon(
+                                                      hasKey
+                                                          ? Icons.verified_user_rounded
+                                                          : Icons.hourglass_bottom_rounded,
+                                                      size: 13,
+                                                      color: hasKey
+                                                          ? const Color(0xFF00FFA3)
+                                                          : Colors.amber,
+                                                    ),
+                                                  ],
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                          IconButton(
+                                            icon: const Icon(
+                                              Icons.delete_outline_rounded,
+                                              color: Colors.white30,
+                                              size: 20,
+                                            ),
+                                            onPressed: () => _deleteContact(contact),
+                                          ),
+                                          const Icon(
+                                            Icons.chevron_right_rounded,
+                                            color: Color(0xFF00FFA3),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              },
                             ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF007AFF),
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                          ),
-                          onPressed: () {
-                            final raw = _searchOrAddIdController.text.trim();
-                            if (raw.isNotEmpty) {
-                              _addOrOpenContact(rawId: raw);
-                            } else {
-                              _showAddContactModal(s);
-                            }
-                          },
-                          child: Text(
-                            s.tr('ورود به چت', 'Start Chat'),
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                        ),
-                      ],
                     ),
-                    const SizedBox(height: 20),
-
-                    // Contacts List Header
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          s.tr(
-                            'مخاطبین خصوصی شما (${filteredContacts.length})',
-                            'Your Private Contacts (${filteredContacts.length})',
-                          ),
-                          style: const TextStyle(
-                            color: Colors.white70,
-                            fontSize: 13,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        Text(
-                          s.tr('پشتیبانی از ارسال پیام آفلاین ✓', 'Offline Queuing Enabled ✓'),
-                          style: const TextStyle(color: Color(0xFF00FFA3), fontSize: 11),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-
-                    if (filteredContacts.isEmpty)
-                      Container(
-                        padding: const EdgeInsets.all(28),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF14141A),
-                          borderRadius: BorderRadius.circular(18),
-                          border: Border.all(color: Colors.white10),
-                        ),
-                        child: Column(
-                          children: [
-                            const Icon(
-                              Icons.people_outline_rounded,
-                              color: Colors.white24,
-                              size: 54,
-                            ),
-                            const SizedBox(height: 12),
-                            Text(
-                              s.tr(
-                                'هنوز مخاطبی اضافه نکرده‌اید.\nشناسه دوستتان (مثلاً SP-742-918) را در کادر بالا وارد کنید یا QR او را اسکن کنید تا گفتگو شروع شود!',
-                                'No contacts yet.\nEnter your partner\'s SecretPlay ID above or scan their QR code to start chatting!',
-                              ),
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(color: Colors.white54, fontSize: 13),
-                            ),
-                          ],
-                        ),
-                      )
-                    else
-                      ...filteredContacts.map((contact) {
-                        final hasKey =
-                            contact.peerPublicKey != null && contact.peerPublicKey!.isNotEmpty;
-                        return Card(
-                          color: const Color(0xFF16161E),
-                          margin: const EdgeInsets.only(bottom: 10),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16),
-                            side: BorderSide(
-                              color: hasKey
-                                  ? const Color(0xFF00FFA3).withOpacity(0.35)
-                                  : Colors.white12,
-                            ),
-                          ),
-                          child: ListTile(
-                            contentPadding:
-                                const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                            leading: CircleAvatar(
-                              backgroundColor: const Color(0xFF007AFF).withOpacity(0.2),
-                              child: const Icon(Icons.person_rounded, color: Color(0xFF64D2FF)),
-                            ),
-                            title: Text(
-                              contact.alias,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 15,
-                              ),
-                            ),
-                            subtitle: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const SizedBox(height: 3),
-                                Text(
-                                  s.tr(
-                                    'شناسه: ${contact.contactId}',
-                                    'ID: ${contact.contactId}',
-                                  ),
-                                  style: const TextStyle(
-                                    color: Color(0xFF00FFA3),
-                                    fontSize: 12,
-                                    fontFamily: 'monospace',
-                                  ),
-                                ),
-                                Text(
-                                  hasKey
-                                      ? s.tr(
-                                          '🔐 کلید رمزنگاری تایید شده • ارسال آنلاین و آفلاین فعال',
-                                          '🔐 E2EE Key Pinned • Online & Offline Messaging Ready',
-                                        )
-                                      : s.tr(
-                                          '⏳ آماده تبادل خودکار کلید در اولین اتصال',
-                                          '⏳ Ready for automatic E2EE key exchange',
-                                        ),
-                                  style: const TextStyle(color: Colors.white54, fontSize: 11),
-                                ),
-                              ],
-                            ),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                IconButton(
-                                  icon: const Icon(
-                                    Icons.delete_outline_rounded,
-                                    color: Colors.white38,
-                                    size: 20,
-                                  ),
-                                  onPressed: () => _deleteContact(contact),
-                                ),
-                                const Icon(
-                                  Icons.chat_bubble_outline_rounded,
-                                  color: Color(0xFF00FFA3),
-                                ),
-                              ],
-                            ),
-                            onTap: () => _openChatWithContact(contact),
-                          ),
-                        );
-                      }),
                   ],
                 ),
               ),

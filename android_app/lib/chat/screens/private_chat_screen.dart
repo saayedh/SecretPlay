@@ -61,7 +61,8 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
   String? _peerPublicKey;
   SimpleKeyPair? _myKeyPair;
   bool _sendNextTextAsFlash = false;
-  int? _burnTimerSeconds; // null = Off, or 5, 10, 30 seconds
+  bool _showAttachDock = false;
+  int? _burnTimerSeconds;
   EphemeralChatMessage? _activeFlashHologram;
   Timer? _uiCountdownTick;
   final Set<String> _playingVoiceIds = {};
@@ -197,7 +198,6 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
           peerDeviceId: pId,
           peerPublicKeyBase64: pKey,
         );
-        // Also persist peer key inside Contacts list if activeContact is set
         final rawList = await keystore.getContactsJson();
         if (rawList != null && rawList.isNotEmpty) {
           try {
@@ -326,6 +326,7 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
   }
 
   void _onTextChanged(String val) {
+    setState(() {}); // Updates Send/Mic icon toggle
     final wsClient = ref.read(wsClientProvider);
     if (_myDeviceId == null) return;
     final trimmed = val.trim();
@@ -476,6 +477,8 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
     final flash = _sendNextTextAsFlash;
     if (_sendNextTextAsFlash) {
       setState(() => _sendNextTextAsFlash = false);
+    } else {
+      setState(() {});
     }
     await _sendWithAutoLookup(
       text: text,
@@ -500,6 +503,7 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
   }
 
   Future<void> _openVoiceRecorder() async {
+    setState(() => _showAttachDock = false);
     final isFa = ref.read(appLocaleProvider) == AppLang.fa;
     final res = await showDialog<WalkieTalkieVoiceResult>(
       context: context,
@@ -537,6 +541,7 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
   }
 
   Future<void> _openSketchPad({bool initialFlash = true}) async {
+    setState(() => _showAttachDock = false);
     final isFa = ref.read(appLocaleProvider) == AppLang.fa;
     final res = await showDialog<NeonSketchResult>(
       context: context,
@@ -553,6 +558,7 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
   }
 
   Future<void> _openPhotoStudio() async {
+    setState(() => _showAttachDock = false);
     final isFa = ref.read(appLocaleProvider) == AppLang.fa;
     final res = await showDialog<SnapPhotoResult>(
       context: context,
@@ -569,6 +575,7 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
   }
 
   Future<void> _openStickerSheet() async {
+    setState(() => _showAttachDock = false);
     final isFa = ref.read(appLocaleProvider) == AppLang.fa;
     final res = await showModalBottomSheet<CyberStickerSelection>(
       context: context,
@@ -582,6 +589,33 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
       stickerId: res.sticker.id,
       isFlashScreen: res.flashOnScreen,
       burnAfterSeconds: _burnTimerSeconds,
+    );
+  }
+
+  void _openImageLightbox(String mediaBase64) {
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.black,
+        insetPadding: const EdgeInsets.all(12),
+        child: Stack(
+          children: [
+            InteractiveViewer(
+              child: Center(
+                child: Image.memory(base64Decode(mediaBase64), fit: BoxFit.contain),
+              ),
+            ),
+            Positioned(
+              top: 8,
+              right: 8,
+              child: IconButton(
+                icon: const Icon(Icons.close_rounded, color: Colors.white, size: 28),
+                onPressed: () => Navigator.of(ctx).pop(),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -628,9 +662,9 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
         return const Color(0xFF00FFA3);
       case ConnectionStatus.authenticated:
       case ConnectionStatus.connected:
-        return const Color(0xFFFF9500);
+        return const Color(0xFFFFB800);
       case ConnectionStatus.connecting:
-        return const Color(0xFF64D2FF);
+        return const Color(0xFF00E5FF);
       case ConnectionStatus.disconnected:
         return const Color(0xFFFF453A);
     }
@@ -639,15 +673,15 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
   String _getStatusText(S s) {
     switch (_connectionStatus) {
       case ConnectionStatus.peerOnline:
-        return s.tr('متصل • رمزنگاری دوطرفه فعال', 'Connected • E2EE Active');
+        return s.tr('آنلاین • رمزنگاری سرتاسری', 'Online • E2EE Active');
       case ConnectionStatus.authenticated:
-        return s.tr('آنلاین • منتظر نفر دوم با همین توکن', 'Online • Waiting for Partner');
+        return s.tr('آماده ارسال آفلاین و آنلاین', 'Offline & Online Ready');
       case ConnectionStatus.connected:
         return s.tr('در حال احراز هویت...', 'Authenticating...');
       case ConnectionStatus.connecting:
         return s.tr('در حال اتصال...', 'Connecting...');
       case ConnectionStatus.disconnected:
-        return s.tr('آفلاین / قطع شده', 'Offline / Disconnected');
+        return s.tr('آفلاین', 'Offline');
     }
   }
 
@@ -657,6 +691,9 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
     final wsClient = ref.watch(wsClientProvider);
     final lang = ref.watch(appLocaleProvider);
     final s = S(lang);
+    final titleText = widget.activeContact?.alias ??
+        (_activeToken.isNotEmpty ? _activeToken : 'SECRETPLAY');
+    final hasText = _textController.text.trim().isNotEmpty;
 
     return CallbackShortcuts(
       bindings: {
@@ -671,349 +708,397 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
             child: Stack(
               children: [
                 Scaffold(
-                  backgroundColor: Colors.black,
+                  backgroundColor: const Color(0xFF07080D),
                   appBar: AppBar(
-                leading: IconButton(
-                  icon: Icon(
-                    Navigator.of(context).canPop() ? Icons.arrow_back_rounded : Icons.lock_rounded,
-                    color: Navigator.of(context).canPop()
-                        ? const Color(0xFF64D2FF)
-                        : const Color(0xFFFF453A),
-                  ),
-                  tooltip: Navigator.of(context).canPop()
-                      ? s.tr('بازگشت به مخاطبین', 'Back to Contacts')
-                      : s.tr('قفل فوری و پاکسازی حافظه', 'Instant Lock & Wipe'),
-                  onPressed: () {
-                    if (Navigator.of(context).canPop()) {
-                      Navigator.of(context).pop();
-                    } else {
-                      _manualLockAndExit();
-                    }
-                  },
-                ),
-                title: GestureDetector(
-                  onTap: _openConnectionStatus,
-                  child: Column(
-                    children: [
-                      Text(
-                        widget.activeContact != null
-                            ? '${widget.activeContact!.alias} (${widget.activeContact!.contactId})'
-                            : (_activeToken.isNotEmpty
-                                ? s.tr('اتاق: $_activeToken', 'Room: $_activeToken')
-                                : 'SECRETPLAY E2EE'),
-                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                    backgroundColor: const Color(0xFF0D0F18),
+                    leading: IconButton(
+                      icon: Icon(
+                        Navigator.of(context).canPop()
+                            ? Icons.arrow_back_ios_new_rounded
+                            : Icons.lock_rounded,
+                        color: Navigator.of(context).canPop()
+                            ? const Color(0xFF00E5FF)
+                            : const Color(0xFFFF453A),
+                        size: 20,
                       ),
-                      const SizedBox(height: 2),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Container(
-                            width: 7,
-                            height: 7,
-                            decoration: BoxDecoration(
-                              color: _getStatusColor(),
-                              shape: BoxShape.circle,
-                            ),
-                          ),
-                          const SizedBox(width: 5),
-                          Text(
-                            _isPeerTyping
-                                ? s.tr('✍️ در حال نوشتن پیام...', '✍️ Typing a message...')
-                                : _getStatusText(s),
-                            style: TextStyle(
-                              color: _isPeerTyping ? const Color(0xFF00E5FF) : _getStatusColor(),
-                              fontSize: 10,
-                              fontWeight: _isPeerTyping ? FontWeight.bold : FontWeight.normal,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-                actions: [
-                  IconButton(
-                    icon: const Icon(Icons.call_rounded, color: Color(0xFF00FFA3)),
-                    tooltip: s.tr('تماس صوتی رمزنگاری‌شده', 'Encrypted Voice Call'),
-                    onPressed: _connectionStatus == ConnectionStatus.peerOnline
-                        ? () => _startVoiceCall(video: false)
-                        : null,
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.videocam_rounded, color: Color(0xFF00E5FF)),
-                    tooltip: s.tr('تماس تصویری رمزنگاری‌شده', 'Encrypted Video Call'),
-                    onPressed: _connectionStatus == ConnectionStatus.peerOnline
-                        ? () => _startVoiceCall(video: true)
-                        : null,
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.key_rounded, color: Color(0xFF64D2FF)),
-                    tooltip: s.tr('تغییر توکن اتاق', 'Change Room Token'),
-                    onPressed: _openTokenSettings,
-                  ),
-                  TextButton(
-                    style: TextButton.styleFrom(
-                      minimumSize: const Size(38, 36),
-                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      onPressed: () {
+                        if (Navigator.of(context).canPop()) {
+                          Navigator.of(context).pop();
+                        } else {
+                          _manualLockAndExit();
+                        }
+                      },
                     ),
-                    onPressed: () => ref.read(appLocaleProvider.notifier).toggleLanguage(),
-                    child: Text(
-                      s.isFa ? 'EN' : 'فا',
-                      style: const TextStyle(
-                        color: Color(0xFFFFD60A),
-                        fontWeight: FontWeight.bold,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ),
-                  PopupMenuButton<String>(
-                    icon: const Icon(Icons.more_vert, color: Colors.white70),
-                    color: const Color(0xFF1C1C22),
-                    onSelected: (val) {
-                      if (val == 'network') {
-                        Navigator.of(context)
-                            .push(
-                              MaterialPageRoute(
-                                builder: (_) => NetworkModeScreen(wsClient: wsClient),
-                              ),
-                            )
-                            .then((_) => _setupConnection());
-                      } else if (val == 'security') {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(builder: (_) => const SecuritySettingsScreen()),
-                        );
-                      } else if (val == 'reconnect') {
-                        _setupConnection();
-                      }
-                    },
-                    itemBuilder: (_) => [
-                      PopupMenuItem(
-                        value: 'reconnect',
-                        child: Text(
-                          s.tr('🔄 اتصال مجدد به سرور', '🔄 Reconnect to Relay'),
-                          style: const TextStyle(color: Colors.white),
-                        ),
-                      ),
-                      PopupMenuItem(
-                        value: 'network',
-                        child: Text(
-                          s.tr('🌐 حالت شبکه (کلودفلر / لوکال)', '🌐 Network Mode (Cloud / Local)'),
-                          style: const TextStyle(color: Colors.white),
-                        ),
-                      ),
-                      PopupMenuItem(
-                        value: 'security',
-                        child: Text(
-                          s.tr('🛡️ تنظیمات امنیتی و کلیدها', '🛡️ Security & Keys'),
-                          style: const TextStyle(color: Colors.white),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-              body: Column(
-                children: [
-                  // Shared Token & Flash Mode Banner
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
-                    color: const Color(0xFF1C1C1E),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Expanded(
-                          child: Text(
-                            _activeToken.isNotEmpty
-                                ? s.tr(
-                                    'توکن: $_activeToken • ارسال عکس، نقاشی و فلش روی صفحه قفل فعال است',
-                                    'Token: $_activeToken • E2EE Photo, Sketch & Lock-Screen Flash Active',
-                                  )
-                                : s.tr('بدون ذخیره تاریخچه چت (Session-Only)', 'Zero-Disk Session-Only'),
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(color: Colors.white60, fontSize: 11),
-                          ),
-                        ),
-                        if (_activeToken.isNotEmpty)
-                          InkWell(
-                            onTap: () {
-                              Clipboard.setData(ClipboardData(text: _activeToken));
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    s.tr('توکن $_activeToken کپی شد!', 'Token $_activeToken copied!'),
-                                  ),
-                                ),
-                              );
-                            },
-                            child: const Padding(
-                              padding: EdgeInsets.symmetric(horizontal: 6),
-                              child: Icon(Icons.copy, size: 15, color: Color(0xFF64D2FF)),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-
-                  // Messages View
-                  Expanded(
-                    child: messages.isEmpty
-                        ? Center(
-                            child: Padding(
-                              padding: const EdgeInsets.all(24.0),
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                    Icons.bolt_rounded,
-                                    color: const Color(0xFFFF007A).withOpacity(0.35),
-                                    size: 64,
-                                  ),
-                                  const SizedBox(height: 12),
-                                  Text(
-                                    _connectionStatus == ConnectionStatus.peerOnline
-                                        ? s.tr(
-                                            'اتصال دوطرفه برقرار شد!\nمی‌توانید پیام، عکس، استیکر یا نقاشی نئونی بفرستید تا مستقیم روی صفحه گوشی طرف مقابل ظاهر شود.',
-                                            'Mutual E2EE Session Active!\nSend text, photos, stickers, or a Live Neon Sketch to pop up directly on your partner\'s screen.',
-                                          )
-                                        : s.tr(
-                                            'منتظر ورود نفر دوم با توکن $_activeToken...',
-                                            'Waiting for partner to join with token $_activeToken...',
-                                          ),
-                                    textAlign: TextAlign.center,
-                                    style: const TextStyle(color: Colors.white54, fontSize: 13),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          )
-                        : ListView.builder(
-                            controller: _scrollController,
-                            padding: const EdgeInsets.all(16),
-                            itemCount: messages.length,
-                            itemBuilder: (context, index) {
-                              final msg = messages[index];
-                              return _buildMessageBubble(msg, s);
-                            },
-                          ),
-                  ),
-
-                  // Animated Peer Typing Indicator Banner above input bar
-                  if (_isPeerTyping)
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                      color: const Color(0xFF161824),
+                    titleSpacing: 0,
+                    title: GestureDetector(
+                      onTap: _openConnectionStatus,
                       child: Row(
                         children: [
-                          const Icon(Icons.edit_note_rounded, color: Color(0xFF00E5FF), size: 18),
-                          const SizedBox(width: 6),
-                          Text(
-                            s.tr(
-                              '${widget.activeContact?.alias ?? "مخاطب"} در حال نوشتن پیام است...',
-                              '${widget.activeContact?.alias ?? "Partner"} is typing...',
+                          Container(
+                            width: 38,
+                            height: 38,
+                            decoration: const BoxDecoration(
+                              shape: BoxShape.circle,
+                              gradient: LinearGradient(
+                                colors: [Color(0xFF00FFA3), Color(0xFF00B8D4)],
+                              ),
                             ),
-                            style: const TextStyle(
-                              color: Color(0xFF00E5FF),
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
+                            child: Center(
+                              child: Text(
+                                titleText.characters.first.toUpperCase(),
+                                style: const TextStyle(
+                                  color: Colors.black,
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 16,
+                                ),
+                              ),
                             ),
                           ),
-                        ],
-                      ),
-                    ),
-
-                  // Rich Media & Flash Action Toolbar + Text Input
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                    color: const Color(0xFF121216),
-                    child: SafeArea(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          // Quick Rich Media Bar (Photo / Neon Sketch / Stickers / Flash Screen Toggle)
-                          SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            child: Row(
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                _buildToolbarChip(
-                                  icon: Icons.mic_rounded,
-                                  label: s.tr('🎙️ ویس واکی‌تاکی', '🎙️ Voice Note'),
-                                  color: const Color(0xFFBF5AF2),
-                                  onTap: _openVoiceRecorder,
+                                Text(
+                                  titleText,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w700,
+                                  ),
                                 ),
-                                const SizedBox(width: 8),
-                                _buildToolbarChip(
-                                  icon: Icons.timer_outlined,
-                                  label: _burnTimerSeconds != null
-                                      ? s.tr('⏱️ خودنابودگر: ${_burnTimerSeconds}s', '⏱️ Burn: ${_burnTimerSeconds}s')
-                                      : s.tr('⏱️ خودنابودگر: خاموش', '⏱️ Burn: OFF'),
-                                  color: const Color(0xFFFF9F0A),
-                                  isActive: _burnTimerSeconds != null,
-                                  onTap: _cycleBurnTimer,
-                                ),
-                                const SizedBox(width: 8),
-                                _buildToolbarChip(
-                                  icon: Icons.camera_alt_rounded,
-                                  label: s.tr('📸 عکس', '📸 Photo'),
-                                  color: const Color(0xFF00FFA3),
-                                  onTap: _openPhotoStudio,
-                                ),
-                                const SizedBox(width: 8),
-                                _buildToolbarChip(
-                                  icon: Icons.brush_rounded,
-                                  label: s.tr('🎨 نقاشی روی صفحه', '🎨 Neon Sketch'),
-                                  color: const Color(0xFF00E5FF),
-                                  onTap: () => _openSketchPad(initialFlash: true),
-                                ),
-                                const SizedBox(width: 8),
-                                _buildToolbarChip(
-                                  icon: Icons.auto_awesome_rounded,
-                                  label: s.tr('✨ استیکر نئونی', '✨ Stickers'),
-                                  color: const Color(0xFFFFD60A),
-                                  onTap: _openStickerSheet,
-                                ),
-                                const SizedBox(width: 8),
-                                _buildToolbarChip(
-                                  icon: Icons.bolt_rounded,
-                                  label: _sendNextTextAsFlash
-                                      ? s.tr('⚡ فلش روی صفحه: روشن', '⚡ Screen Flash: ON')
-                                      : s.tr('⚡ فلش روی صفحه قفل', '⚡ Flash Lock Screen'),
-                                  color: const Color(0xFFFF007A),
-                                  isActive: _sendNextTextAsFlash,
-                                  onTap: () {
-                                    setState(() => _sendNextTextAsFlash = !_sendNextTextAsFlash);
-                                  },
+                                Row(
+                                  children: [
+                                    Container(
+                                      width: 7,
+                                      height: 7,
+                                      decoration: BoxDecoration(
+                                        color: _isPeerTyping
+                                            ? const Color(0xFF00E5FF)
+                                            : _getStatusColor(),
+                                        shape: BoxShape.circle,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 5),
+                                    Flexible(
+                                      child: Text(
+                                        _isPeerTyping
+                                            ? s.tr('در حال نوشتن...', 'typing...')
+                                            : _getStatusText(s),
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color: _isPeerTyping
+                                              ? const Color(0xFF00E5FF)
+                                              : _getStatusColor(),
+                                          fontSize: 11,
+                                          fontWeight: _isPeerTyping
+                                              ? FontWeight.bold
+                                              : FontWeight.normal,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ],
                             ),
                           ),
-                          const SizedBox(height: 8),
-                          Row(
+                        ],
+                      ),
+                    ),
+                    actions: [
+                      IconButton(
+                        icon: const Icon(Icons.call_rounded, color: Color(0xFF00FFA3)),
+                        tooltip: s.tr('تماس صوتی', 'Voice Call'),
+                        onPressed: _connectionStatus == ConnectionStatus.peerOnline
+                            ? () => _startVoiceCall(video: false)
+                            : null,
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.videocam_rounded, color: Color(0xFF00E5FF)),
+                        tooltip: s.tr('تماس تصویری', 'Video Call'),
+                        onPressed: _connectionStatus == ConnectionStatus.peerOnline
+                            ? () => _startVoiceCall(video: true)
+                            : null,
+                      ),
+                      PopupMenuButton<String>(
+                        icon: const Icon(Icons.more_vert_rounded, color: Colors.white70),
+                        color: const Color(0xFF171A26),
+                        onSelected: (val) {
+                          if (val == 'lock') {
+                            _manualLockAndExit();
+                          } else if (val == 'lang') {
+                            ref.read(appLocaleProvider.notifier).toggleLanguage();
+                          } else if (val == 'token') {
+                            _openTokenSettings();
+                          } else if (val == 'network') {
+                            Navigator.of(context)
+                                .push(
+                                  MaterialPageRoute(
+                                    builder: (_) => NetworkModeScreen(wsClient: wsClient),
+                                  ),
+                                )
+                                .then((_) => _setupConnection());
+                          } else if (val == 'security') {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(builder: (_) => const SecuritySettingsScreen()),
+                            );
+                          }
+                        },
+                        itemBuilder: (_) => [
+                          PopupMenuItem(
+                            value: 'lock',
+                            child: Text(
+                              s.tr('🔒 قفل فوری و خروج به بازی', '🔒 Panic Lock & Exit'),
+                              style: const TextStyle(color: Color(0xFFFF453A)),
+                            ),
+                          ),
+                          PopupMenuItem(
+                            value: 'lang',
+                            child: Text(
+                              s.isFa ? '🌐 Switch to English' : '🌐 تغییر زبان به فارسی',
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                          ),
+                          PopupMenuItem(
+                            value: 'token',
+                            child: Text(
+                              s.tr('🔑 تنظیمات توکن اتاق', '🔑 Room Token'),
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                          ),
+                          PopupMenuItem(
+                            value: 'network',
+                            child: Text(
+                              s.tr('📡 حالت شبکه', '📡 Network Mode'),
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                          ),
+                          PopupMenuItem(
+                            value: 'security',
+                            child: Text(
+                              s.tr('🛡️ امنیت و پین فریبنده', '🛡️ Security Settings'),
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                  body: Column(
+                    children: [
+                      // Messages List
+                      Expanded(
+                        child: Container(
+                          decoration: const BoxDecoration(
+                            gradient: RadialGradient(
+                              center: Alignment(0.0, -0.3),
+                              radius: 1.3,
+                              colors: [Color(0xFF101322), Color(0xFF07080D)],
+                            ),
+                          ),
+                          child: messages.isEmpty
+                              ? Center(
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(28.0),
+                                    child: Column(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        Container(
+                                          padding: const EdgeInsets.all(18),
+                                          decoration: BoxDecoration(
+                                            shape: BoxShape.circle,
+                                            color: const Color(0xFF00FFA3).withOpacity(0.1),
+                                            border: Border.all(
+                                              color: const Color(0xFF00FFA3).withOpacity(0.35),
+                                            ),
+                                          ),
+                                          child: const Icon(
+                                            Icons.shield_moon_rounded,
+                                            color: Color(0xFF00FFA3),
+                                            size: 46,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 16),
+                                        Text(
+                                          s.tr(
+                                            'گفتگوی کاملاً رمزنگاری‌شده و بدون تاریخچه',
+                                            'End-to-End Encrypted • Zero-Disk Vault',
+                                          ),
+                                          textAlign: TextAlign.center,
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        Text(
+                                          s.tr(
+                                            'پیام، استیکر، نقاشی نئونی یا ویس بفرستید — حتی اگر مخاطب آفلاین باشد در صف امن تحویل می‌ماند.',
+                                            'Send texts, stickers, neon sketches, or voice notes — even if your partner is offline.',
+                                          ),
+                                          textAlign: TextAlign.center,
+                                          style: const TextStyle(
+                                            color: Colors.white54,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                )
+                              : ListView.builder(
+                                  controller: _scrollController,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 14,
+                                    vertical: 14,
+                                  ),
+                                  itemCount: messages.length,
+                                  itemBuilder: (context, index) =>
+                                      _buildMessageBubble(messages[index], s),
+                                ),
+                        ),
+                      ),
+
+                      // Typing Indicator Strip
+                      if (_isPeerTyping)
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                          color: const Color(0xFF0E111C),
+                          child: Row(
                             children: [
+                              const Icon(Icons.more_horiz_rounded,
+                                  color: Color(0xFF00E5FF), size: 20),
+                              const SizedBox(width: 6),
+                              Text(
+                                s.tr(
+                                  '$titleText در حال نوشتن است...',
+                                  '$titleText is typing...',
+                                ),
+                                style: const TextStyle(
+                                  color: Color(0xFF00E5FF),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                      // Expandable Clean Attachment Dock (+ Menu)
+                      if (_showAttachDock)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                          decoration: const BoxDecoration(
+                            color: Color(0xFF11131E),
+                            border: Border(top: BorderSide(color: Colors.white10)),
+                          ),
+                          child: GridView.count(
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            crossAxisCount: 3,
+                            mainAxisSpacing: 10,
+                            crossAxisSpacing: 10,
+                            childAspectRatio: 2.1,
+                            children: [
+                              _buildAttachTile(
+                                icon: Icons.camera_alt_rounded,
+                                label: s.tr('عکس', 'Photo'),
+                                color: const Color(0xFF00FFA3),
+                                onTap: _openPhotoStudio,
+                              ),
+                              _buildAttachTile(
+                                icon: Icons.brush_rounded,
+                                label: s.tr('نقاشی نئونی', 'Sketch'),
+                                color: const Color(0xFF00E5FF),
+                                onTap: () => _openSketchPad(initialFlash: true),
+                              ),
+                              _buildAttachTile(
+                                icon: Icons.auto_awesome_rounded,
+                                label: s.tr('استیکر', 'Stickers'),
+                                color: const Color(0xFFFFD60A),
+                                onTap: _openStickerSheet,
+                              ),
+                              _buildAttachTile(
+                                icon: Icons.mic_rounded,
+                                label: s.tr('ویس واکی‌تاکی', 'Voice'),
+                                color: const Color(0xFFBF5AF2),
+                                onTap: _openVoiceRecorder,
+                              ),
+                              _buildAttachTile(
+                                icon: Icons.local_fire_department_rounded,
+                                label: _burnTimerSeconds != null
+                                    ? s.tr('نابودی ${_burnTimerSeconds}s', 'Burn ${_burnTimerSeconds}s')
+                                    : s.tr('تایمر حذف', 'Burn Timer'),
+                                color: const Color(0xFFFF9F0A),
+                                active: _burnTimerSeconds != null,
+                                onTap: _cycleBurnTimer,
+                              ),
+                              _buildAttachTile(
+                                icon: Icons.bolt_rounded,
+                                label: s.tr('فلش صفحه قفل', 'Flash Lock'),
+                                color: const Color(0xFFFF007A),
+                                active: _sendNextTextAsFlash,
+                                onTap: () {
+                                  setState(() {
+                                    _sendNextTextAsFlash = !_sendNextTextAsFlash;
+                                    _showAttachDock = false;
+                                  });
+                                },
+                              ),
+                            ],
+                          ),
+                        ),
+
+                      // Sleek Modern Input Bar
+                      Container(
+                        padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+                        decoration: const BoxDecoration(
+                          color: Color(0xFF0D0F18),
+                          border: Border(top: BorderSide(color: Colors.white10)),
+                        ),
+                        child: SafeArea(
+                          top: false,
+                          child: Row(
+                            children: [
+                              IconButton(
+                                icon: Icon(
+                                  _showAttachDock
+                                      ? Icons.close_rounded
+                                      : Icons.add_circle_outline_rounded,
+                                  color: _showAttachDock
+                                      ? const Color(0xFFFF007A)
+                                      : const Color(0xFF00E5FF),
+                                  size: 28,
+                                ),
+                                onPressed: () =>
+                                    setState(() => _showAttachDock = !_showAttachDock),
+                              ),
                               Expanded(
                                 child: TextField(
                                   controller: _textController,
                                   onChanged: _onTextChanged,
-                                  style: const TextStyle(color: Colors.white),
+                                  style: const TextStyle(color: Colors.white, fontSize: 15),
                                   decoration: InputDecoration(
                                     hintText: _sendNextTextAsFlash
                                         ? s.tr(
-                                            '⚡ پیام فوری برای نمایش روی صفحه قفل طرف مقابل...',
-                                            '⚡ Flash message to pop up on partner\'s screen...',
+                                            '⚡ پیام فلش روی صفحه قفل...',
+                                            '⚡ Flash message on lock screen...',
                                           )
                                         : s.tr(
-                                            'پیام رمزنگاری‌شده بنویسید...',
-                                            'Write an encrypted message...',
+                                            'پیام خود را بنویسید...',
+                                            'Message...',
                                           ),
                                     hintStyle: TextStyle(
                                       color: _sendNextTextAsFlash
                                           ? const Color(0xFFFF007A)
-                                          : Colors.white30,
+                                          : Colors.white38,
                                       fontSize: 13,
                                     ),
                                     filled: true,
-                                    fillColor: const Color(0xFF1C1C22),
+                                    fillColor: const Color(0xFF171A26),
                                     contentPadding: const EdgeInsets.symmetric(
                                       horizontal: 16,
                                       vertical: 11,
@@ -1021,7 +1106,10 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
                                     border: OutlineInputBorder(
                                       borderRadius: BorderRadius.circular(24),
                                       borderSide: _sendNextTextAsFlash
-                                          ? const BorderSide(color: Color(0xFFFF007A), width: 1.5)
+                                          ? const BorderSide(
+                                              color: Color(0xFFFF007A),
+                                              width: 1.4,
+                                            )
                                           : BorderSide.none,
                                     ),
                                   ),
@@ -1029,77 +1117,89 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
                                 ),
                               ),
                               const SizedBox(width: 8),
-                              Container(
-                                decoration: BoxDecoration(
-                                  color: _sendNextTextAsFlash
-                                      ? const Color(0xFFFF007A)
-                                      : const Color(0xFF007AFF),
-                                  shape: BoxShape.circle,
-                                ),
-                                child: IconButton(
-                                  icon: Icon(
-                                    _sendNextTextAsFlash ? Icons.bolt_rounded : Icons.send_rounded,
-                                    color: Colors.white,
+                              GestureDetector(
+                                onTap: hasText ? _sendMessage : _openVoiceRecorder,
+                                child: Container(
+                                  width: 44,
+                                  height: 44,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    gradient: LinearGradient(
+                                      colors: _sendNextTextAsFlash
+                                          ? [const Color(0xFFFF007A), const Color(0xFFFF5E00)]
+                                          : (hasText
+                                              ? [const Color(0xFF00FFA3), const Color(0xFF00E5FF)]
+                                              : [const Color(0xFF9D4EDD), const Color(0xFF5E5CE6)]),
+                                    ),
                                   ),
-                                  onPressed: _sendMessage,
+                                  child: Icon(
+                                    hasText
+                                        ? (_sendNextTextAsFlash
+                                            ? Icons.bolt_rounded
+                                            : Icons.send_rounded)
+                                        : Icons.mic_rounded,
+                                    color: hasText && !_sendNextTextAsFlash
+                                        ? Colors.black
+                                        : Colors.white,
+                                    size: 21,
+                                  ),
                                 ),
                               ),
                             ],
                           ),
-                        ],
+                        ),
                       ),
+                    ],
+                  ),
+                ),
+
+                if (_activeFlashHologram != null)
+                  Positioned.fill(
+                    child: FlashHologramOverlay(
+                      message: _activeFlashHologram!,
+                      isFa: s.isFa,
+                      onDismiss: () => setState(() => _activeFlashHologram = null),
+                      onQuickReplySketch: () => _openSketchPad(initialFlash: true),
                     ),
                   ),
-                ],
-              ),
+              ],
             ),
-
-            // Live Full-Screen Hologram Overlay when partner sends a Flash message/sketch/sticker!
-            if (_activeFlashHologram != null)
-              Positioned.fill(
-                child: FlashHologramOverlay(
-                  message: _activeFlashHologram!,
-                  isFa: s.isFa,
-                  onDismiss: () => setState(() => _activeFlashHologram = null),
-                  onQuickReplySketch: () => _openSketchPad(initialFlash: true),
-                ),
-              ),
-          ],
+          ),
         ),
-      ),
-    ),
       ),
     );
   }
 
-  Widget _buildToolbarChip({
+  Widget _buildAttachTile({
     required IconData icon,
     required String label,
     required Color color,
     required VoidCallback onTap,
-    bool isActive = false,
+    bool active = false,
   }) {
     return InkWell(
-      borderRadius: BorderRadius.circular(18),
+      borderRadius: BorderRadius.circular(14),
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
         decoration: BoxDecoration(
-          color: isActive ? color : color.withOpacity(0.14),
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: color.withOpacity(0.65)),
+          color: active ? color.withOpacity(0.28) : color.withOpacity(0.10),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: color.withOpacity(active ? 1.0 : 0.45)),
         ),
         child: Row(
-          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, size: 15, color: isActive ? Colors.white : color),
+            Icon(icon, color: color, size: 17),
             const SizedBox(width: 5),
-            Text(
-              label,
-              style: TextStyle(
-                color: isActive ? Colors.white : Colors.white,
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
+            Flexible(
+              child: Text(
+                label,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
           ],
@@ -1124,12 +1224,27 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
     return Align(
       alignment: msg.isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
+        margin: const EdgeInsets.only(bottom: 10),
         constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.78),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         decoration: BoxDecoration(
-          color: msg.isMe ? const Color(0xFF007AFF) : const Color(0xFF23232B),
-          borderRadius: BorderRadius.circular(18),
+          gradient: msg.isMe
+              ? const LinearGradient(
+                  colors: [Color(0xFF0066FF), Color(0xFF0099FF)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                )
+              : const LinearGradient(
+                  colors: [Color(0xFF1A1E2E), Color(0xFF22273B)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+          borderRadius: BorderRadius.only(
+            topLeft: const Radius.circular(18),
+            topRight: const Radius.circular(18),
+            bottomLeft: Radius.circular(msg.isMe ? 18 : 4),
+            bottomRight: Radius.circular(msg.isMe ? 4 : 18),
+          ),
           border: msg.isFlashScreen
               ? Border.all(color: const Color(0xFFFF007A), width: 1.5)
               : (remainingBurnSec != null
@@ -1165,7 +1280,8 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
                       Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Icon(Icons.local_fire_department_rounded, color: Color(0xFFFF9F0A), size: 14),
+                          const Icon(Icons.local_fire_department_rounded,
+                              color: Color(0xFFFF9F0A), size: 14),
                           const SizedBox(width: 2),
                           Text(
                             s.tr('نابودی در ${remainingBurnSec}s', 'Burns in ${remainingBurnSec}s'),
@@ -1196,7 +1312,9 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(
-                        isPlayingVoice ? Icons.graphic_eq_rounded : Icons.play_circle_fill_rounded,
+                        isPlayingVoice
+                            ? Icons.graphic_eq_rounded
+                            : Icons.play_circle_fill_rounded,
                         color: const Color(0xFF00FFA3),
                         size: 32,
                       ),
@@ -1215,7 +1333,7 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
                             ),
                             const SizedBox(height: 3),
                             Text(
-                              '${msg.isCyberPitch ? s.tr("🤖 صدای سایبری • ", "🤖 Cyber Pitch • ") : ""}${msg.isOneTimeVoice ? s.tr("💥 یک‌بارمصرف", "💥 One-Time Listen") : s.tr("برای پخش بزنید", "Tap to play")}',
+                              '${msg.isCyberPitch ? s.tr("🤖 صدای سایبری • ", "🤖 Cyber Pitch • ") : ""}${msg.isOneTimeVoice ? s.tr("💥 یک‌بارمصرف", "💥 One-Time") : s.tr("پخش", "Play")}',
                               style: const TextStyle(color: Colors.white70, fontSize: 10),
                             ),
                           ],
@@ -1229,14 +1347,14 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
               Center(
                 child: Column(
                   children: [
-                    Text(sticker.emoji, style: const TextStyle(fontSize: 52)),
+                    Text(sticker.emoji, style: const TextStyle(fontSize: 54)),
                     const SizedBox(height: 4),
                     Text(
                       s.isFa ? sticker.titleFa : sticker.titleEn,
                       style: const TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.bold,
-                        fontSize: 14,
+                        fontSize: 13,
                       ),
                     ),
                   ],
@@ -1245,17 +1363,20 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
             ] else if ((msg.contentType == ChatContentType.drawing ||
                     msg.contentType == ChatContentType.image) &&
                 msg.mediaBase64 != null) ...[
-              ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Container(
-                  color: const Color(0xFF09090D),
-                  constraints: const BoxConstraints(maxHeight: 230),
-                  child: Image.memory(
-                    base64Decode(msg.mediaBase64!),
-                    fit: BoxFit.contain,
-                    errorBuilder: (_, __, ___) => const Icon(
-                      Icons.broken_image_outlined,
-                      color: Colors.white54,
+              GestureDetector(
+                onTap: () => _openImageLightbox(msg.mediaBase64!),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    color: const Color(0xFF09090D),
+                    constraints: const BoxConstraints(maxHeight: 230),
+                    child: Image.memory(
+                      base64Decode(msg.mediaBase64!),
+                      fit: BoxFit.contain,
+                      errorBuilder: (_, __, ___) => const Icon(
+                        Icons.broken_image_outlined,
+                        color: Colors.white54,
+                      ),
                     ),
                   ),
                 ),
@@ -1270,7 +1391,7 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
             ] else ...[
               Text(
                 msg.text,
-                style: const TextStyle(color: Colors.white, fontSize: 15),
+                style: const TextStyle(color: Colors.white, fontSize: 15, height: 1.35),
               ),
             ],
 
@@ -1280,15 +1401,19 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
               children: [
                 Text(
                   timeStr,
-                  style: const TextStyle(color: Colors.white54, fontSize: 10),
+                  style: const TextStyle(color: Colors.white60, fontSize: 10),
                 ),
                 if (msg.isMe) ...[
                   const SizedBox(width: 4),
                   Icon(
                     msg.status == MessageDeliveryStatus.relayed
-                        ? Icons.done_all
-                        : Icons.done,
-                    color: Colors.white70,
+                        ? Icons.done_all_rounded
+                        : (msg.status == MessageDeliveryStatus.sent
+                            ? Icons.schedule_rounded
+                            : Icons.done_rounded),
+                    color: msg.status == MessageDeliveryStatus.relayed
+                        ? const Color(0xFF00FFA3)
+                        : Colors.white70,
                     size: 13,
                   ),
                 ],

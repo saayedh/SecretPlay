@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../controllers/game_controller.dart';
 import '../models/game_board.dart';
@@ -18,15 +19,15 @@ class _GameHomeScreenState extends ConsumerState<GameHomeScreen> {
   DateTime? _lastTapTime;
 
   void _onTrophyTapped() {
+    HapticFeedback.selectionClick();
     final now = DateTime.now();
-    if (_lastTapTime == null || now.difference(_lastTapTime!).inMilliseconds > 800) {
+    if (_lastTapTime == null || now.difference(_lastTapTime!).inMilliseconds > 900) {
       _trophyTapCount = 1;
     } else {
       _trophyTapCount++;
     }
     _lastTapTime = now;
 
-    // Secret trigger: 3 rapid taps or long press opens private access screen
     if (_trophyTapCount >= 3) {
       _trophyTapCount = 0;
       _openPrivateGateway();
@@ -34,44 +35,48 @@ class _GameHomeScreenState extends ConsumerState<GameHomeScreen> {
   }
 
   void _openPrivateGateway() {
+    HapticFeedback.mediumImpact();
     Navigator.of(context).push(
       PageRouteBuilder(
-        pageBuilder: (context, animation, secondaryAnimation) =>
-            const PrivateAccessScreen(),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          return FadeTransition(opacity: animation, child: child);
+        transitionDuration: const Duration(milliseconds: 260),
+        pageBuilder: (_, animation, __) => const PrivateAccessScreen(),
+        transitionsBuilder: (_, animation, __, child) {
+          return FadeTransition(
+            opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
+            child: child,
+          );
         },
       ),
     );
   }
 
-  Color _getGemColor(GemType type) {
+  List<Color> _getGemGradient(GemType type) {
     switch (type) {
       case GemType.cyan:
-        return const Color(0xFF00E5FF);
+        return [const Color(0xFF00E5FF), const Color(0xFF0077FF)];
       case GemType.neonPink:
-        return const Color(0xFFFF1744);
+        return [const Color(0xFFFF2A85), const Color(0xFFFF0055)];
       case GemType.electricGreen:
-        return const Color(0xFF00E676);
+        return [const Color(0xFF00FFA3), const Color(0xFF00B86B)];
       case GemType.amber:
-        return const Color(0xFFFFAB00);
+        return [const Color(0xFFFFD60A), const Color(0xFFFF8800)];
       case GemType.purple:
-        return const Color(0xFFD500F9);
+        return [const Color(0xFFE040FB), const Color(0xFF7C4DFF)];
     }
   }
 
   IconData _getGemIcon(GemType type) {
     switch (type) {
       case GemType.cyan:
-        return Icons.diamond_outlined;
+        return Icons.diamond_rounded;
       case GemType.neonPink:
-        return Icons.hexagon_outlined;
+        return Icons.favorite_rounded;
       case GemType.electricGreen:
-        return Icons.square_outlined;
+        return Icons.bolt_rounded;
       case GemType.amber:
-        return Icons.circle_outlined;
+        return Icons.hexagon_rounded;
       case GemType.purple:
-        return Icons.star_border_purple500_outlined;
+        return Icons.auto_awesome_rounded;
     }
   }
 
@@ -79,172 +84,337 @@ class _GameHomeScreenState extends ConsumerState<GameHomeScreen> {
   Widget build(BuildContext context) {
     final gameState = ref.watch(gameProvider);
     final gameNotifier = ref.read(gameProvider.notifier);
+    final progress = (gameState.score / (gameState.targetScore > 0 ? gameState.targetScore : 1))
+        .clamp(0.0, 1.0);
 
     return Scaffold(
-      appBar: AppBar(
-        title: GestureDetector(
-          onTap: _onTrophyTapped,
-          onLongPress: _openPrivateGateway,
-          child: const Text('CYBER CIRCUIT'),
-        ),
-        actions: [
-          // Secret trigger disguised as Trophy Icon
-          GestureDetector(
-            onTap: _onTrophyTapped,
-            onLongPress: _openPrivateGateway,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0),
-              child: Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.05),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.emoji_events_outlined,
-                  color: Color(0xFFFFD700),
-                  size: 22,
-                ),
-              ),
-            ),
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: RadialGradient(
+            center: Alignment(0.0, -0.6),
+            radius: 1.2,
+            colors: [Color(0xFF161B33), Color(0xFF07080D)],
           ),
-        ],
-      ),
-      body: SafeArea(
-        child: Column(
-          children: [
-            // Score Board
-            Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceAround,
-                children: [
-                  _buildStatCard('SCORE', '${gameState.score}', const Color(0xFF00FFA3)),
-                  _buildStatCard('MOVES', '${gameState.movesLeft}', const Color(0xFFFF007A)),
-                  _buildStatCard('TARGET', '${gameState.targetScore}', const Color(0xFF7928CA)),
-                ],
-              ),
-            ),
-
-            // Game Grid Board
-            Expanded(
-              child: Center(
-                child: AspectRatio(
-                  aspectRatio: 1.0,
-                  child: Container(
-                    margin: const EdgeInsets.all(12),
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF13111C),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: Colors.white.withOpacity(0.1)),
-                    ),
-                    child: GridView.builder(
-                      physics: const NeverScrollableScrollPhysics(),
-                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: GameController.cols,
-                        crossAxisSpacing: 6,
-                        mainAxisSpacing: 6,
-                      ),
-                      itemCount: GameController.rows * GameController.cols,
-                      itemBuilder: (context, index) {
-                        final r = index ~/ GameController.cols;
-                        final c = index % GameController.cols;
-                        if (r >= gameState.grid.length || c >= gameState.grid[r].length) {
-                          return const SizedBox();
-                        }
-                        final tile = gameState.grid[r][c];
-                        final isSelected = gameState.selectedTile?.row == r &&
-                            gameState.selectedTile?.col == c;
-
-                        return GestureDetector(
-                          onTap: () => gameNotifier.onTileTapped(r, c),
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 200),
+        ),
+        child: SafeArea(
+          child: Column(
+            children: [
+              // Sleek Arcade Header
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    GestureDetector(
+                      onTap: _onTrophyTapped,
+                      onLongPress: _openPrivateGateway,
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 38,
+                            height: 38,
                             decoration: BoxDecoration(
-                              color: _getGemColor(tile.type).withOpacity(isSelected ? 0.4 : 0.15),
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(
-                                color: isSelected
-                                    ? Colors.white
-                                    : _getGemColor(tile.type).withOpacity(0.6),
-                                width: isSelected ? 2.5 : 1.2,
+                              gradient: const LinearGradient(
+                                colors: [Color(0xFF00FFA3), Color(0xFF00E5FF)],
                               ),
-                              boxShadow: isSelected
-                                  ? [
-                                      BoxShadow(
-                                        color: _getGemColor(tile.type).withOpacity(0.6),
-                                        blurRadius: 8,
-                                        spreadRadius: 2,
-                                      )
-                                    ]
-                                  : null,
+                              borderRadius: BorderRadius.circular(12),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: const Color(0xFF00FFA3).withOpacity(0.35),
+                                  blurRadius: 12,
+                                ),
+                              ],
                             ),
-                            child: Icon(
-                              _getGemIcon(tile.type),
-                              color: _getGemColor(tile.type),
-                              size: 24,
-                            ),
+                            child: const Icon(Icons.gamepad_rounded, color: Colors.black, size: 22),
                           ),
-                        );
-                      },
+                          const SizedBox(width: 10),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'CYBER CIRCUIT',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 1.4,
+                                ),
+                              ),
+                              Text(
+                                'SECTOR ${gameState.level.toString().padLeft(2, '0')}',
+                                style: const TextStyle(
+                                  color: Color(0xFF00E5FF),
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 1.2,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    // Secret Trophy Trigger
+                    GestureDetector(
+                      onTap: _onTrophyTapped,
+                      onLongPress: _openPrivateGateway,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.06),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: const Color(0xFFFFD700).withOpacity(0.35)),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.emoji_events_rounded, color: Color(0xFFFFD700), size: 20),
+                            SizedBox(width: 4),
+                            Text(
+                              'PRO',
+                              style: TextStyle(
+                                color: Color(0xFFFFD700),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              // Score & Progress HUD
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 6),
+                child: Column(
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _buildStatCard(
+                            'SCORE',
+                            '${gameState.score}',
+                            const Color(0xFF00FFA3),
+                            Icons.stars_rounded,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: _buildStatCard(
+                            'MOVES',
+                            '${gameState.movesLeft}',
+                            const Color(0xFFFF2A85),
+                            Icons.bolt_rounded,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: _buildStatCard(
+                            'TARGET',
+                            '${gameState.targetScore}',
+                            const Color(0xFF00E5FF),
+                            Icons.flag_rounded,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(10),
+                      child: LinearProgressIndicator(
+                        value: progress,
+                        minHeight: 7,
+                        backgroundColor: Colors.white.withOpacity(0.08),
+                        valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF00FFA3)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              // 7x7 Glowing Game Grid
+              Expanded(
+                child: Center(
+                  child: AspectRatio(
+                    aspectRatio: 1.0,
+                    child: Container(
+                      margin: const EdgeInsets.all(14),
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0E111D).withOpacity(0.92),
+                        borderRadius: BorderRadius.circular(24),
+                        border: Border.all(color: Colors.white.withOpacity(0.1)),
+                        boxShadow: [
+                          BoxShadow(
+                            color: const Color(0xFF00E5FF).withOpacity(0.08),
+                            blurRadius: 24,
+                            spreadRadius: 2,
+                          ),
+                        ],
+                      ),
+                      child: GridView.builder(
+                        physics: const NeverScrollableScrollPhysics(),
+                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: GameController.cols,
+                          crossAxisSpacing: 6,
+                          mainAxisSpacing: 6,
+                        ),
+                        itemCount: GameController.rows * GameController.cols,
+                        itemBuilder: (context, index) {
+                          final r = index ~/ GameController.cols;
+                          final c = index % GameController.cols;
+                          if (r >= gameState.grid.length || c >= gameState.grid[r].length) {
+                            return const SizedBox();
+                          }
+                          final tile = gameState.grid[r][c];
+                          final isSelected = gameState.selectedTile?.row == r &&
+                              gameState.selectedTile?.col == c;
+                          final grad = _getGemGradient(tile.type);
+
+                          return GestureDetector(
+                            onTap: () {
+                              HapticFeedback.lightImpact();
+                              gameNotifier.onTileTapped(r, c);
+                            },
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 180),
+                              curve: Curves.easeOut,
+                              transform: isSelected
+                                  ? (Matrix4.identity()..scale(1.08))
+                                  : Matrix4.identity(),
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  colors: [
+                                    grad[0].withOpacity(isSelected ? 0.55 : 0.22),
+                                    grad[1].withOpacity(isSelected ? 0.38 : 0.10),
+                                  ],
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                ),
+                                borderRadius: BorderRadius.circular(11),
+                                border: Border.all(
+                                  color: isSelected ? Colors.white : grad[0].withOpacity(0.55),
+                                  width: isSelected ? 2.2 : 1.0,
+                                ),
+                                boxShadow: isSelected
+                                    ? [
+                                        BoxShadow(
+                                          color: grad[0].withOpacity(0.65),
+                                          blurRadius: 12,
+                                          spreadRadius: 1,
+                                        ),
+                                      ]
+                                    : null,
+                              ),
+                              child: Center(
+                                child: Icon(
+                                  _getGemIcon(tile.type),
+                                  color: grad[0],
+                                  size: 22,
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
 
-            // Bottom Navigation Bar
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12.0),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.grid_view_rounded, size: 28),
-                    color: Colors.white70,
-                    onPressed: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(builder: (_) => const GameLevelsScreen()),
-                      );
-                    },
+              // Bottom Action Dock
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 4, 20, 14),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF131624),
+                    borderRadius: BorderRadius.circular(22),
+                    border: Border.all(color: Colors.white.withOpacity(0.08)),
                   ),
-                  ElevatedButton.icon(
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('RESTART'),
-                    onPressed: () => gameNotifier.startLevel(gameState.level),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.grid_view_rounded, size: 26, color: Colors.white70),
+                        tooltip: 'Sectors',
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(builder: (_) => const GameLevelsScreen()),
+                          );
+                        },
+                      ),
+                      ElevatedButton.icon(
+                        icon: const Icon(Icons.refresh_rounded, size: 20),
+                        label: const Text('NEW GAME'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF00FFA3),
+                          foregroundColor: Colors.black,
+                          padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        ),
+                        onPressed: () => gameNotifier.startLevel(gameState.level),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.tune_rounded, size: 26, color: Colors.white70),
+                        tooltip: 'Settings',
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(builder: (_) => const GameSettingsScreen()),
+                          );
+                        },
+                      ),
+                    ],
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.settings, size: 28),
-                    color: Colors.white70,
-                    onPressed: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(builder: (_) => const GameSettingsScreen()),
-                      );
-                    },
-                  ),
-                ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildStatCard(String label, String value, Color color) {
+  Widget _buildStatCard(String label, String value, Color color, IconData icon) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
       decoration: BoxDecoration(
-        color: const Color(0xFF13111C),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withOpacity(0.3)),
+        color: const Color(0xFF131624),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: color.withOpacity(0.28)),
       ),
       child: Column(
         children: [
-          Text(label, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.bold)),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, color: color, size: 13),
+              const SizedBox(width: 4),
+              Text(
+                label,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.8,
+                ),
+              ),
+            ],
+          ),
           const SizedBox(height: 4),
-          Text(value, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+          Text(
+            value,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 19,
+              fontWeight: FontWeight.w900,
+              fontFamily: 'monospace',
+            ),
+          ),
         ],
       ),
     );

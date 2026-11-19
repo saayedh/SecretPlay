@@ -1,72 +1,74 @@
 import 'package:flutter/material.dart';
 
 class AppThemes {
-  // Playful Arcade / Game Mode Theme
+  static const Color bgObsidian = Color(0xFF07080D);
+  static const Color bgSurface = Color(0xFF11131C);
+  static const Color bgCard = Color(0xFF171A26);
+  static const Color neonCyan = Color(0xFF00E5FF);
+  static const Color neonGreen = Color(0xFF00FFA3);
+  static const Color neonPink = Color(0xFFFF007A);
+  static const Color neonPurple = Color(0xFF9D4EDD);
+  static const Color neonAmber = Color(0xFFFFB800);
+
   static final ThemeData gameTheme = ThemeData(
     useMaterial3: true,
     brightness: Brightness.dark,
+    scaffoldBackgroundColor: bgObsidian,
     colorScheme: const ColorScheme.dark(
-      primary: Color(0xFF00FFA3), // Neon mint
-      secondary: Color(0xFFFF007A), // Cyberpunk pink
-      tertiary: Color(0xFF7928CA), // Electric purple
-      surface: Color(0xFF13111C),
-      onPrimary: Colors.black,
-      onSecondary: Colors.white,
-      onSurface: Color(0xFFE4E4EB),
+      primary: neonGreen,
+      secondary: neonPink,
+      tertiary: neonCyan,
+      surface: bgSurface,
     ),
-    scaffoldBackgroundColor: const Color(0xFF0A090F),
     appBarTheme: const AppBarTheme(
-      backgroundColor: Color(0xFF13111C),
+      backgroundColor: Colors.transparent,
       elevation: 0,
       centerTitle: true,
       titleTextStyle: TextStyle(
-        fontFamily: 'sans-serif',
-        fontWeight: FontWeight.bold,
-        fontSize: 20,
-        color: Color(0xFF00FFA3),
+        color: Colors.white,
+        fontSize: 18,
+        fontWeight: FontWeight.w800,
+        letterSpacing: 1.5,
       ),
     ),
     cardTheme: CardTheme(
-      color: const Color(0xFF1A1726),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      elevation: 4,
+      color: bgCard,
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: BorderSide(color: Colors.white.withOpacity(0.08)),
+      ),
     ),
     elevatedButtonTheme: ElevatedButtonThemeData(
       style: ElevatedButton.styleFrom(
-        backgroundColor: const Color(0xFF00FFA3),
+        backgroundColor: neonGreen,
         foregroundColor: Colors.black,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-        textStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+        elevation: 0,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        textStyle: const TextStyle(fontWeight: FontWeight.w800),
       ),
     ),
   );
 
-  // Private Secure Communication Theme
   static final ThemeData privateTheme = ThemeData(
     useMaterial3: true,
     brightness: Brightness.dark,
+    scaffoldBackgroundColor: bgObsidian,
     colorScheme: const ColorScheme.dark(
-      primary: Color(0xFF64D2FF), // Titanium ice blue
-      secondary: Color(0xFF5E5CE6), // Deep indigo
-      surface: Color(0xFF1C1C1E),
-      onPrimary: Colors.black,
-      onSurface: Color(0xFFE5E5EA),
+      primary: neonCyan,
+      secondary: neonGreen,
+      surface: bgSurface,
+      error: Color(0xFFFF453A),
     ),
-    scaffoldBackgroundColor: const Color(0xFF000000),
     appBarTheme: const AppBarTheme(
-      backgroundColor: Color(0xFF1C1C1E),
+      backgroundColor: Color(0xFF0D0F18),
       elevation: 0,
-      centerTitle: true,
+      centerTitle: false,
       titleTextStyle: TextStyle(
-        fontWeight: FontWeight.w600,
-        fontSize: 18,
-        color: Color(0xFFE5E5EA),
+        color: Colors.white,
+        fontSize: 16,
+        fontWeight: FontWeight.w700,
       ),
-    ),
-    cardTheme: CardTheme(
-      color: const Color(0xFF1C1C1E),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
     ),
   );
 }
