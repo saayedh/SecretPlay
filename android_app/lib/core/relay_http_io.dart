@@ -26,3 +26,5 @@ Future<String?> relayHttpPost(String url, Map<String, dynamic> body) async {
   } catch (_) {}
   return null;
 }
+
+void openExternalUrlInBrowser(String url) {}

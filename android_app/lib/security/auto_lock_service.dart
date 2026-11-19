@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
@@ -48,6 +49,8 @@ class AutoLockService with WidgetsBindingObserver {
   }
 
   final List<LockCallback> _lockListeners = [];
+  final StreamController<int> _updateProgressController = StreamController<int>.broadcast();
+  Stream<int> get onUpdateProgress => _updateProgressController.stream;
 
   void addLockListener(LockCallback callback) {
     _lockListeners.add(callback);
@@ -78,6 +81,9 @@ class AutoLockService with WidgetsBindingObserver {
           if (_shakeToLockEnabled && !_isLocked) {
             triggerLock('shake_to_lock_panic');
           }
+        } else if (call.method == 'onUpdateProgress') {
+          final pct = call.arguments as int? ?? 0;
+          _updateProgressController.add(pct);
         }
       });
     } catch (_) {

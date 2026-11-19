@@ -75,6 +75,7 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
   StreamSubscription? _signalSub;
   StreamSubscription? _peerIdSub;
   StreamSubscription? _flashSub;
+  StreamSubscription? _updateSub;
   bool _isShowingIncomingCall = false;
 
   @override
@@ -102,6 +103,7 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
     _signalSub?.cancel();
     _peerIdSub?.cancel();
     _flashSub?.cancel();
+    _updateSub?.cancel();
     _textController.clear();
     _textController.dispose();
     _scrollController.dispose();
@@ -141,6 +143,17 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
     _myDeviceId = deviceId;
     _myKeyPair = keyPair;
 
+    var myNumber = await keystore.getMySecretNumber();
+    if (myNumber == null || myNumber.isEmpty) {
+      myNumber = SecretContact.deriveMySecretNumber('$deviceId:$myPub');
+      await keystore.saveMySecretNumber(myNumber);
+    }
+    unawaited(RelayDirectoryService.registerIdentity(
+      deviceId: deviceId,
+      secretNumber: myNumber,
+      publicKeyBase64: myPub,
+    ));
+
     final savedToken =
         widget.activeContact?.roomToken ?? (await keystore.getPairToken()) ?? '';
     if (savedToken.isNotEmpty) {
@@ -157,6 +170,13 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
     String? peerPub = widget.activeContact != null
         ? widget.activeContact!.peerPublicKey
         : await keystore.getPeerPublicKey();
+
+    if ((peerPub == null || peerPub.isEmpty) &&
+        wsClient.lastPeerDeviceId != null &&
+        wsClient.lastPeerPublicKey != null) {
+      peerId = wsClient.lastPeerDeviceId;
+      peerPub = wsClient.lastPeerPublicKey;
+    }
 
     if ((peerPub == null || peerPub.isEmpty) && widget.activeContact != null) {
       final lookedUp = await RelayDirectoryService.lookupBySecretNumber(
@@ -180,6 +200,18 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
         myIdentityKeyPair: keyPair,
       );
     }
+
+    _updateSub?.cancel();
+    _updateSub = wsClient.onAppUpdate.listen((updatePayload) {
+      if (mounted) {
+        final isFa = ref.read(appLocaleProvider) == AppLang.fa;
+        RelayDirectoryService.showUpdateDialogFromPush(
+          context,
+          updatePayload,
+          isFa: isFa,
+        );
+      }
+    });
 
     _flashSub?.cancel();
     _flashSub = sessionNotifier.onFlashMessage.listen((flashMsg) {

@@ -22,10 +22,14 @@ import android.os.PowerManager
 import android.util.Base64
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
+import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
+import java.io.FileOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
 import kotlin.math.sqrt
 
 class MainActivity : FlutterFragmentActivity(), SensorEventListener {
@@ -280,6 +284,14 @@ class MainActivity : FlutterFragmentActivity(), SensorEventListener {
                     }
                     result.success(true)
                 }
+                "downloadAndInstallApk" -> {
+                    val url = call.argument<String>("url") ?: ""
+                    if (url.isEmpty()) {
+                        result.success(false)
+                    } else {
+                        downloadAndInstallApk(url, result)
+                    }
+                }
                 "wakeAndShowFlashAlert" -> {
                     val title = call.argument<String>("title") ?: "⚡ SecretPlay Live Flash"
                     val subtitle = call.argument<String>("subtitle") ?: "New Hologram Flash!"
@@ -385,6 +397,85 @@ class MainActivity : FlutterFragmentActivity(), SensorEventListener {
                 audioManager.isSpeakerphoneOn = false
             }
         }
+    }
+
+    private fun downloadAndInstallApk(initialUrl: String, result: MethodChannel.Result) {
+        Thread {
+            try {
+                var currentUrl = initialUrl
+                var conn: HttpURLConnection? = null
+                var redirects = 0
+                while (redirects < 8) {
+                    val urlObj = URL(currentUrl)
+                    conn = (urlObj.openConnection() as HttpURLConnection).apply {
+                        instanceFollowRedirects = false
+                        connectTimeout = 15000
+                        readTimeout = 30000
+                        setRequestProperty("User-Agent", "SecretPlay-Updater/1.3")
+                    }
+                    val code = conn.responseCode
+                    if (code in 300..399) {
+                        val loc = conn.getHeaderField("Location")
+                        conn.disconnect()
+                        if (loc.isNullOrEmpty()) break
+                        currentUrl = URL(urlObj, loc).toString()
+                        redirects++
+                    } else {
+                        break
+                    }
+                }
+
+                if (conn == null || conn.responseCode !in 200..299) {
+                    conn?.disconnect()
+                    runOnUiThread { result.success(false) }
+                    return@Thread
+                }
+
+                val totalBytes = conn.contentLengthLong
+                val apkFile = File(cacheDir, "secretplay_update.apk")
+                if (apkFile.exists()) apkFile.delete()
+
+                conn.inputStream.use { input ->
+                    FileOutputStream(apkFile).use { output ->
+                        val buffer = ByteArray(16384)
+                        var downloaded = 0L
+                        var lastPct = -1
+                        while (true) {
+                            val read = input.read(buffer)
+                            if (read <= 0) break
+                            output.write(buffer, 0, read)
+                            downloaded += read
+                            if (totalBytes > 0) {
+                                val pct = ((downloaded * 100) / totalBytes).toInt().coerceIn(0, 100)
+                                if (pct != lastPct && (pct % 5 == 0 || pct == 100)) {
+                                    lastPct = pct
+                                    runOnUiThread {
+                                        securityMethodChannel?.invokeMethod("onUpdateProgress", pct)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                conn.disconnect()
+
+                val apkUri = FileProvider.getUriForFile(
+                    this,
+                    "${packageName}.fileprovider",
+                    apkFile
+                )
+                val installIntent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(apkUri, "application/vnd.android.package-archive")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                runOnUiThread {
+                    startActivity(installIntent)
+                    result.success(true)
+                }
+            } catch (_: Exception) {
+                runOnUiThread { result.success(false) }
+            }
+        }.start()
     }
 
     override fun onStop() {

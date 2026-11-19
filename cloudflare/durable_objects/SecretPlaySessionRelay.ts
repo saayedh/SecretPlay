@@ -193,6 +193,9 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
           created_at INTEGER NOT NULL
         );
       `);
+      this.ctx.storage.sql.exec(
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_offline_msg_unique ON offline_messages(recipient_device_id, msg_id);`
+      );
     } catch {}
   }
 
@@ -686,6 +689,7 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
     }
 
     // Check Global Admin Registry for Banned Device / Lockdown / Whitelist Policy
+    let latestUpdate: Record<string, unknown> | undefined;
     const adminStub = this.getAdminStub();
     if (adminStub) {
       try {
@@ -715,7 +719,9 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
           const checkJson = (await checkRes.json()) as {
             allowed: boolean;
             reason?: string;
+            latestUpdate?: Record<string, unknown>;
           };
+          latestUpdate = checkJson.latestUpdate;
           if (!checkJson.allowed) {
             const rej: AuthResultMessage = {
               type: 'auth_result',
@@ -747,15 +753,15 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
     if (peerConnected && !this.sessionEpoch) {
       this.sessionEpoch = crypto.randomUUID();
       this.syncEpochToAttachments(sockets, this.sessionEpoch);
-    } else if (!this.sessionEpoch && pairRecord && pairRecord.is_paired) {
-      // Allow paired device to encrypt & queue offline messages using a room epoch
+    } else if (!this.sessionEpoch && pairRecord && pairRecord.pair_id && pairRecord.pair_id !== 'pair-primary') {
+      // Allow token-room device to encrypt & queue offline messages using a room epoch
       this.sessionEpoch = `offline-${pairRecord.pair_id || 'room'}`;
       this.attachDeviceToSocket(ws, deviceId, this.sessionEpoch);
     } else if (this.sessionEpoch) {
       this.attachDeviceToSocket(ws, deviceId, this.sessionEpoch);
     }
 
-    const authRes: AuthResultMessage = {
+    const authRes: AuthResultMessage & { latestUpdate?: Record<string, unknown> } = {
       type: 'auth_result',
       version: 1,
       success: true,
@@ -765,6 +771,7 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
       peerDeviceId: peerDeviceId || undefined,
       peerPublicKey: peerPublicKey || undefined,
       pairToken: authMsg.pairToken,
+      ...(latestUpdate ? { latestUpdate } : {}),
       timestamp: now,
     };
     ws.send(JSON.stringify(authRes));
@@ -841,10 +848,12 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
     }
 
     const sockets = this.getConnectedSocketMap();
+    const pair = this.getPairRecord();
+    const isTokenRoom = Boolean(pair && pair.pair_id && pair.pair_id !== 'pair-primary');
 
-    // Enforce active session epoch (allow offline-* epoch in token/contact rooms)
+    // Enforce active session epoch strictly for primary-pair; in token/contact rooms, E2EE AEAD handles authenticity across reconnects
     const isOfflineEpoch = typeof msg.sessionEpoch === 'string' && msg.sessionEpoch.startsWith('offline-');
-    if ((!this.sessionEpoch || msg.sessionEpoch !== this.sessionEpoch) && !isOfflineEpoch) {
+    if (!isTokenRoom && (!this.sessionEpoch || msg.sessionEpoch !== this.sessionEpoch) && !isOfflineEpoch) {
       ws.send(
         JSON.stringify({
           type: 'terminate',
@@ -868,19 +877,17 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
       }
     }
     if (!recipient) {
-      const pair = this.getPairRecord();
       const targetDeviceId =
         (pair && pair.device_a_id === senderDeviceId
           ? pair.device_b_id
           : pair && pair.device_b_id === senderDeviceId
             ? pair.device_a_id
             : null) || msg.recipientDeviceId;
-      const isTokenRoom = pair && pair.pair_id && pair.pair_id !== 'pair-primary';
       if (isTokenRoom && targetDeviceId && targetDeviceId !== senderDeviceId) {
         let savedToSql = false;
         try {
           this.ctx.storage.sql.exec(
-            `INSERT INTO offline_messages (recipient_device_id, msg_id, payload_json, created_at) VALUES (?, ?, ?, ?);`,
+            `INSERT OR IGNORE INTO offline_messages (recipient_device_id, msg_id, payload_json, created_at) VALUES (?, ?, ?, ?);`,
             targetDeviceId,
             msg.msgId,
             JSON.stringify(msg),
@@ -890,7 +897,7 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
         } catch {}
         if (!savedToSql) {
           const list = this.offlineQueue.get(targetDeviceId) ?? [];
-          if (list.length < 100) {
+          if (list.length < 100 && !list.some((m) => m.msgId === msg.msgId)) {
             list.push(msg);
             this.offlineQueue.set(targetDeviceId, list);
           }
@@ -956,10 +963,12 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
     }
 
     const sockets = this.getConnectedSocketMap();
+    const pair = this.getPairRecord();
+    const isTokenRoom = Boolean(pair && pair.pair_id && pair.pair_id !== 'pair-primary');
 
     const isOfflineEpoch =
       typeof signal.sessionEpoch === 'string' && signal.sessionEpoch.startsWith('offline-');
-    if ((!this.sessionEpoch || signal.sessionEpoch !== this.sessionEpoch) && !isOfflineEpoch) {
+    if (!isTokenRoom && (!this.sessionEpoch || signal.sessionEpoch !== this.sessionEpoch) && !isOfflineEpoch) {
       return;
     }
 
@@ -994,8 +1003,35 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
   private handleTerminate(ws: WebSocket, msg: TerminateSessionMessage): void {
     const senderDeviceId = this.getSocketDeviceId(ws);
     const sockets = this.getConnectedSocketMap();
+    const pair = this.getPairRecord();
+    const isTokenRoom = Boolean(pair && pair.pair_id && pair.pair_id !== 'pair-primary');
 
-    // Inform peer of termination
+    if (isTokenRoom) {
+      // In token/contact rooms, one user locking/exiting must NOT kill the partner's connection
+      if (senderDeviceId) {
+        this.activeDevices.delete(senderDeviceId);
+        sockets.delete(senderDeviceId);
+      }
+      this.sessionEpoch = `offline-${pair!.pair_id || 'room'}`;
+      this.syncEpochToAttachments(sockets, this.sessionEpoch);
+      for (const peerWs of sockets.values()) {
+        try {
+          peerWs.send(
+            JSON.stringify({
+              type: 'session_status',
+              version: 1,
+              active: false,
+              peerOnline: false,
+              sessionEpoch: this.sessionEpoch,
+              timestamp: Date.now(),
+            })
+          );
+        } catch {}
+      }
+      return;
+    }
+
+    // Inform peer of termination in strict primary-pair mode
     for (const [dId, peerWs] of sockets.entries()) {
       if (dId !== senderDeviceId) {
         try {
@@ -1263,12 +1299,14 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
 
     if (deviceId) {
       this.activeDevices.delete(deviceId);
-      // Ending any socket invalidates the mutual session epoch immediately
-      this.sessionEpoch = null;
+      const pair = this.getPairRecord();
+      const isTokenRoom = Boolean(pair && pair.pair_id && pair.pair_id !== 'pair-primary');
+      // Ending any socket invalidates the mutual session epoch in primary-pair, or falls back to offline epoch in token rooms
+      this.sessionEpoch = isTokenRoom ? `offline-${pair!.pair_id || 'room'}` : null;
 
       const sockets = this.getConnectedSocketMap();
       sockets.delete(deviceId);
-      this.syncEpochToAttachments(sockets, null);
+      this.syncEpochToAttachments(sockets, this.sessionEpoch);
       for (const peerWs of sockets.values()) {
         if (peerWs === ws) continue;
         try {
@@ -1278,7 +1316,7 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
               version: 1,
               active: false,
               peerOnline: false,
-              sessionEpoch: '',
+              sessionEpoch: this.sessionEpoch || '',
               timestamp: Date.now(),
             })
           );
@@ -1338,6 +1376,17 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
       );
       const existing = [...cur] as unknown as AdminDeviceRow[];
 
+      const latestUpdate = {
+        latestVersion: cfg.latest_version || '1.3.0',
+        latestBuild: cfg.latest_build || 3,
+        downloadUrl:
+          cfg.download_url ||
+          'https://github.com/saayedh/SecretPlay/releases/download/v1.0.0/app-arm64-v8a-release.apk',
+        releaseNotes:
+          cfg.release_notes ||
+          'نسخه جدید SecretPlay با پایداری کامل چت، دانلود مستقیم آپدیت و تماس پایدار آماده است!',
+      };
+
       if (existing.length === 0) {
         const defaultApproved = cfg.whitelist_mode ? 0 : 1;
         this.ctx.storage.sql.exec(
@@ -1366,18 +1415,28 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
             reason: 'Device pending Administrator Whitelist Approval',
           });
         }
-        return Response.json({ allowed: true });
+        return Response.json({ allowed: true, latestUpdate });
       } else {
         const dev = existing[0];
+        const nextSecretNumber =
+          body.event === 'register' && body.secretNumber
+            ? body.secretNumber
+            : dev.secret_number && dev.secret_number !== 'SP-000-000'
+              ? dev.secret_number
+              : body.secretNumber || dev.secret_number;
+        const nextRoomToken =
+          body.roomToken && body.roomToken !== 'directory'
+            ? body.roomToken
+            : dev.room_token;
         this.ctx.storage.sql.exec(
           `UPDATE admin_devices
            SET last_seen = ?, connect_count = connect_count + 1, room_token = ?, country = ?, ip_masked = ?, secret_number = ?, public_key = COALESCE(NULLIF(?, ''), public_key)
            WHERE device_id = ?;`,
           now,
-          body.roomToken || dev.room_token,
+          nextRoomToken,
           body.country || dev.country,
           body.ipMasked || dev.ip_masked,
-          body.secretNumber || dev.secret_number,
+          nextSecretNumber,
           body.publicKey || '',
           deviceId
         );
@@ -1399,7 +1458,7 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
             reason: 'Device not approved in Whitelist Mode',
           });
         }
-        return Response.json({ allowed: true });
+        return Response.json({ allowed: true, latestUpdate });
       }
     }
 
@@ -1430,26 +1489,50 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
     if (path === '/internal-admin/version' && request.method === 'GET') {
       const cfg = this.getAdminConfig();
       return Response.json({
-        latestVersion: cfg.latest_version || '1.2.0',
-        latestBuild: cfg.latest_build || 2,
+        latestVersion: cfg.latest_version || '1.3.0',
+        latestBuild: cfg.latest_build || 3,
         downloadUrl:
           cfg.download_url ||
           'https://github.com/saayedh/SecretPlay/releases/download/v1.0.0/app-arm64-v8a-release.apk',
         releaseNotes:
           cfg.release_notes ||
-          'نسخه جدید SecretPlay با رفع باگ پیام و تماس و قابلیت‌های جدید آماده دانلود است!',
+          'نسخه جدید SecretPlay با پایداری کامل چت، دانلود مستقیم آپدیت و تماس پایدار آماده است!',
         timestamp: now,
       });
     }
 
-    // 2. Room-level immediate kick/reset invoked by Admin Registry
+    // 2. Room-level immediate kick/reset/broadcast invoked by Admin Registry
     if (path === '/internal-admin/room-action' && request.method === 'POST') {
       const body = (await request.json()) as {
-        action: 'kick_device' | 'reset_room' | 'revoke_room';
+        action: 'kick_device' | 'reset_room' | 'revoke_room' | 'broadcast_update';
         deviceId?: string;
         reason?: string;
+        latestVersion?: string;
+        latestBuild?: number;
+        downloadUrl?: string;
+        releaseNotes?: string;
       };
       const sockets = this.getConnectedSocketMap();
+
+      if (body.action === 'broadcast_update') {
+        let notifiedSockets = 0;
+        const payload = JSON.stringify({
+          type: 'app_update',
+          version: 1,
+          latestVersion: body.latestVersion || '1.3.0',
+          latestBuild: body.latestBuild || 3,
+          downloadUrl: body.downloadUrl || '',
+          releaseNotes: body.releaseNotes || '',
+          timestamp: now,
+        });
+        for (const sock of sockets.values()) {
+          try {
+            sock.send(payload);
+            notifiedSockets++;
+          } catch {}
+        }
+        return Response.json({ ok: true, notifiedSockets });
+      }
 
       if (body.action === 'kick_device' && body.deviceId) {
         const targetWs = sockets.get(body.deviceId);
@@ -1646,7 +1729,15 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
           }
           break;
 
-        case 'publish_update':
+        case 'publish_update': {
+          const nextVer = cmd.latestVersion || '1.3.0';
+          const nextBuild = cmd.latestBuild ?? 3;
+          const nextUrl =
+            cmd.downloadUrl ||
+            'https://github.com/saayedh/SecretPlay/releases/download/v1.0.0/app-arm64-v8a-release.apk';
+          const nextNotes =
+            cmd.releaseNotes ||
+            'نسخه جدید SecretPlay آماده دانلود و نصب است!';
           this.ctx.storage.sql.exec(
             `UPDATE admin_config
              SET latest_version = COALESCE(NULLIF(?, ''), latest_version),
@@ -1654,12 +1745,46 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
                  download_url = COALESCE(NULLIF(?, ''), download_url),
                  release_notes = COALESCE(NULLIF(?, ''), release_notes)
              WHERE id = 1;`,
-            cmd.latestVersion || '',
-            cmd.latestBuild ?? null,
-            cmd.downloadUrl || '',
-            cmd.releaseNotes || ''
+            nextVer,
+            nextBuild,
+            nextUrl,
+            nextNotes
           );
-          break;
+          let notifiedRooms = 0;
+          let notifiedSockets = 0;
+          if (this.env?.SESSION_RELAY) {
+            const roomCur = this.ctx.storage.sql.exec(
+              `SELECT DISTINCT room_token FROM admin_devices WHERE room_token IS NOT NULL AND room_token != '' AND room_token != 'directory' AND last_seen > ? LIMIT 200;`,
+              now - 86_400_000
+            );
+            const roomRows = [...roomCur] as unknown as { room_token: string }[];
+            for (const row of roomRows) {
+              const tok = row.room_token;
+              const roomName = tok === 'primary-pair' ? 'primary-pair' : `room:${tok.toUpperCase()}`;
+              const rStub = this.env.SESSION_RELAY.get(this.env.SESSION_RELAY.idFromName(roomName));
+              try {
+                const bRes = await rStub.fetch(
+                  new Request('https://internal/internal-admin/room-action', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                      action: 'broadcast_update',
+                      latestVersion: nextVer,
+                      latestBuild: nextBuild,
+                      downloadUrl: nextUrl,
+                      releaseNotes: nextNotes,
+                    }),
+                  })
+                );
+                if (bRes.ok) {
+                  const bJson = (await bRes.json()) as { notifiedSockets?: number };
+                  notifiedRooms++;
+                  notifiedSockets += bJson.notifiedSockets || 0;
+                }
+              } catch {}
+            }
+          }
+          return Response.json({ ok: true, notifiedRooms, notifiedSockets, timestamp: now });
+        }
 
         case 'reset_room':
         case 'revoke_room': {

@@ -21,10 +21,14 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
   SimpleKeyPair? _myIdentityKeyPair;
   String _currentRoomToken = 'default';
   final Map<String, List<EphemeralChatMessage>> _roomHistories = {};
+  final Set<String> _seenMsgIds = {};
+  final Map<String, Map<String, dynamic>> _unackedEnvelopes = {};
 
   StreamSubscription? _msgSub;
   StreamSubscription? _termSub;
+  StreamSubscription? _statusSub;
   Timer? _burnSweepTimer;
+  int _tickCount = 0;
 
   final StreamController<EphemeralChatMessage> _flashStreamController =
       StreamController<EphemeralChatMessage>.broadcast();
@@ -51,19 +55,32 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
     });
 
     _termSub = _wsClient.onTerminate.listen((reason) {
-      // Only wipe chat memory on explicit security/peer lock, not transient network hiccups
-      if (reason == 'revoked' || reason == 'security_alert' || reason == 'manual_exit') {
+      // Only wipe chat memory on explicit revocation or manual exit, never on transient network errors
+      if (reason == 'revoked' || reason == 'manual_exit') {
         clearSession();
       }
     });
 
-    // Periodic 1-second sweep to auto-destroy expired Burn-After-Reading messages
+    _statusSub = _wsClient.onStatusChange.listen((status) {
+      if (status == ConnectionStatus.authenticated || status == ConnectionStatus.peerOnline) {
+        if (status == ConnectionStatus.peerOnline) {
+          _cryptoService.resetMessageInboundSequence();
+        }
+        _retryUnackedEnvelopes();
+      }
+    });
+
+    // Periodic 1-second sweep to auto-destroy expired Burn-After-Reading messages & retry unacked envelopes every 5s
     _burnSweepTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       final now = DateTime.now().millisecondsSinceEpoch;
       if (state.any((m) => m.expiresAtMs != null && m.expiresAtMs! <= now)) {
         final filtered = state.where((m) => m.expiresAtMs == null || m.expiresAtMs! > now).toList();
         state = filtered;
         _roomHistories[_currentRoomToken] = filtered;
+      }
+      _tickCount++;
+      if (_tickCount % 5 == 0 && _unackedEnvelopes.isNotEmpty) {
+        _retryUnackedEnvelopes();
       }
     });
   }
@@ -90,7 +107,26 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
       } catch (_) {}
     }
 
-    state = List<EphemeralChatMessage>.from(loaded ?? const []);
+    final loadedList = List<EphemeralChatMessage>.from(loaded ?? const []);
+    for (final m in loadedList) {
+      _seenMsgIds.add(m.id);
+    }
+    state = loadedList;
+  }
+
+  void _retryUnackedEnvelopes() {
+    if (_unackedEnvelopes.isEmpty) return;
+    if (_wsClient.status != ConnectionStatus.authenticated &&
+        _wsClient.status != ConnectionStatus.peerOnline) {
+      return;
+    }
+    final now = DateTime.now().millisecondsSinceEpoch;
+    for (final entry in _unackedEnvelopes.entries.toList()) {
+      final ts = entry.value['timestamp'] as int? ?? 0;
+      if (now - ts >= 4000) {
+        _wsClient.sendRaw(entry.value);
+      }
+    }
   }
 
   void _setRoomState(List<EphemeralChatMessage> next) {
@@ -102,10 +138,19 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
           .where((m) => m.burnAfterSeconds == null && !m.isOneTimeVoice)
           .toList();
       final trimmed = toSave.length > 200 ? toSave.sublist(toSave.length - 200) : toSave;
-      _keystore.saveRoomChatHistory(
-        _currentRoomToken,
-        jsonEncode(trimmed.map((m) => m.toStorageJson()).toList()),
-      );
+      var encoded = jsonEncode(trimmed.map((m) => m.toStorageJson()).toList());
+      // Guard against Web localStorage 5MB quota exhaustion if many large media blobs are sent
+      if (encoded.length > 1500000) {
+        final compact = trimmed.map((m) {
+          final j = m.toStorageJson();
+          if (j['mediaBase64'] is String && (j['mediaBase64'] as String).length > 50000) {
+            j.remove('mediaBase64');
+          }
+          return j;
+        }).toList();
+        encoded = jsonEncode(compact);
+      }
+      _keystore.saveRoomChatHistory(_currentRoomToken, encoded);
     } catch (_) {}
   }
 
@@ -154,7 +199,10 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
       debugPrint('[Chat] Cannot send message: peer public key not yet exchanged.');
       return false;
     }
-    final activeEpoch = _wsClient.sessionEpoch ?? 'offline-room';
+    final rawEpoch = _wsClient.sessionEpoch;
+    final activeEpoch = (rawEpoch != null && rawEpoch.isNotEmpty)
+        ? rawEpoch
+        : 'offline-$_currentRoomToken';
     final now = DateTime.now().millisecondsSinceEpoch;
 
     final outgoingMsg = EphemeralChatMessage(
@@ -188,7 +236,7 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
         sessionEpoch: activeEpoch,
       );
 
-      _wsClient.sendRaw({
+      final wirePayload = <String, dynamic>{
         'type': 'msg',
         'version': 1,
         'msgId': outgoingMsg.id,
@@ -202,7 +250,9 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
         'seq': envelope.seq,
         'signature': envelope.signatureBase64,
         'timestamp': DateTime.now().millisecondsSinceEpoch,
-      });
+      };
+      _unackedEnvelopes[outgoingMsg.id] = wirePayload;
+      _wsClient.sendRaw(wirePayload);
 
       _setRoomState([
         for (final m in state)
@@ -225,6 +275,7 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
       final msgId = payload['msgId'] as String?;
       final ackStatus = payload['status'] as String?;
       if (msgId != null) {
+        _unackedEnvelopes.remove(msgId);
         _setRoomState([
           for (final m in state)
             if (m.id == msgId)
@@ -243,6 +294,10 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
     }
 
     if (type != null && type != 'msg') return;
+    final incomingMsgId = payload['msgId'] as String?;
+    if (incomingMsgId != null && _seenMsgIds.contains(incomingMsgId)) {
+      return;
+    }
     if (_myIdentityKeyPair == null || _peerPublicKeyBase64 == null) return;
 
     try {
@@ -255,21 +310,60 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
         signatureBase64: payload['signature'] as String,
       );
 
-      final decrypted = await _cryptoService.decryptMessage(
-        envelope: envelope,
-        recipientIdentityKeyPair: _myIdentityKeyPair!,
-        senderPublicIdentityKeyBase64: _peerPublicKeyBase64!,
-        sessionEpoch: (payload['sessionEpoch'] as String?) ?? (_wsClient.sessionEpoch ?? ''),
-      );
+      final candidateEpochs = <String>{
+        if (payload['sessionEpoch'] is String && (payload['sessionEpoch'] as String).isNotEmpty)
+          payload['sessionEpoch'] as String,
+        if (_wsClient.sessionEpoch != null && _wsClient.sessionEpoch!.isNotEmpty)
+          _wsClient.sessionEpoch!,
+        'offline-$_currentRoomToken',
+        'offline-room',
+        '',
+      }.toList();
+
+      String? decrypted;
+      Object? lastErr;
+      for (final epoch in candidateEpochs) {
+        try {
+          decrypted = await _cryptoService.decryptMessage(
+            envelope: envelope,
+            recipientIdentityKeyPair: _myIdentityKeyPair!,
+            senderPublicIdentityKeyBase64: _peerPublicKeyBase64!,
+            sessionEpoch: epoch,
+          );
+          break;
+        } catch (e) {
+          lastErr = e;
+          if (e.toString().contains('Replay attack detected') &&
+              incomingMsgId != null &&
+              !_seenMsgIds.contains(incomingMsgId)) {
+            _cryptoService.resetMessageInboundSequence();
+            try {
+              decrypted = await _cryptoService.decryptMessage(
+                envelope: envelope,
+                recipientIdentityKeyPair: _myIdentityKeyPair!,
+                senderPublicIdentityKeyBase64: _peerPublicKeyBase64!,
+                sessionEpoch: epoch,
+              );
+              break;
+            } catch (e2) {
+              lastErr = e2;
+            }
+          }
+        }
+      }
+      if (decrypted == null) {
+        throw lastErr ?? Exception('Decryption failed across all candidate epochs');
+      }
 
       final msg = EphemeralChatMessage.fromDecryptedPayload(
-        id: payload['msgId'] as String?,
+        id: incomingMsgId,
         senderDeviceId: payload['senderDeviceId'] as String,
         decryptedText: decrypted,
         timestamp: payload['timestamp'] as int? ?? DateTime.now().millisecondsSinceEpoch,
         isMe: false,
         status: MessageDeliveryStatus.relayed,
       );
+      _seenMsgIds.add(msg.id);
 
       _setRoomState([...state, msg]);
 
@@ -296,6 +390,8 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
   void clearSession() {
     state = [];
     _roomHistories.clear();
+    _seenMsgIds.clear();
+    _unackedEnvelopes.clear();
     _myIdentityKeyPair = null;
     _cryptoService.resetSequence();
     debugPrint('[ChatSession] Session wiped cleanly from memory.');
@@ -306,6 +402,7 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
     _autoLockService.removeLockListener(_handleAutoLock);
     _msgSub?.cancel();
     _termSub?.cancel();
+    _statusSub?.cancel();
     _burnSweepTimer?.cancel();
     _flashStreamController.close();
     clearSession();

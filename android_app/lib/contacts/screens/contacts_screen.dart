@@ -138,7 +138,7 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
       });
     }
 
-    RelayDirectoryService.registerIdentity(
+    await RelayDirectoryService.registerIdentity(
       deviceId: deviceId,
       secretNumber: myNumber,
       publicKeyBase64: pubKey,

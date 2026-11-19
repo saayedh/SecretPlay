@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../security/auto_lock_service.dart';
 import 'constants.dart';
 import 'relay_http_io.dart' if (dart.library.js_interop) 'relay_http_web.dart';
 
@@ -85,15 +87,145 @@ class RelayDirectoryService {
     return null;
   }
 
+  static bool _isUpdateDialogOpen = false;
+
   static Future<void> openDownloadUrl(String url) async {
     if (url.isEmpty) return;
-    if (!kIsWeb) {
-      try {
-        await _channel.invokeMethod('openUrl', {'url': url});
-        return;
-      } catch (_) {}
+    if (kIsWeb) {
+      openExternalUrlInBrowser(url);
+      await Clipboard.setData(ClipboardData(text: url));
+      return;
     }
+    try {
+      await _channel.invokeMethod('openUrl', {'url': url});
+      return;
+    } catch (_) {}
     await Clipboard.setData(ClipboardData(text: url));
+  }
+
+  static Future<void> downloadAndInstallWithProgress(
+    BuildContext context, {
+    required String url,
+    required bool isFa,
+  }) async {
+    if (url.isEmpty) return;
+    if (kIsWeb) {
+      await openDownloadUrl(url);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              isFa
+                  ? 'لینک دانلود در تب جدید باز شد (و کپی گردید).'
+                  : 'Download link opened in a new tab!',
+            ),
+          ),
+        );
+      }
+      return;
+    }
+
+    AutoLockService().setTransientOverlayActive(true);
+    int progress = 0;
+    StateSetter? modalSetState;
+    StreamSubscription<int>? sub;
+
+    if (context.mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (dCtx) => StatefulBuilder(
+          builder: (_, setSt) {
+            modalSetState = setSt;
+            return Directionality(
+              textDirection: isFa ? TextDirection.rtl : TextDirection.ltr,
+              child: AlertDialog(
+                backgroundColor: const Color(0xFF14141E),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(18),
+                  side: const BorderSide(color: Color(0xFF00FFA3)),
+                ),
+                title: Text(
+                  isFa ? 'در حال دانلود آپدیت...' : 'Downloading Update...',
+                  style: const TextStyle(color: Colors.white, fontSize: 15),
+                ),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    LinearProgressIndicator(
+                      value: progress > 0 ? progress / 100.0 : null,
+                      backgroundColor: Colors.white12,
+                      color: const Color(0xFF00FFA3),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      progress > 0 ? '$progress%' : (isFa ? 'اتصال به سرور دانلود...' : 'Connecting...'),
+                      style: const TextStyle(color: Color(0xFF00FFA3), fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      );
+    }
+
+    sub = AutoLockService().onUpdateProgress.listen((pct) {
+      progress = pct;
+      modalSetState?.call(() {});
+    });
+
+    bool installed = false;
+    try {
+      final res = await _channel.invokeMethod<bool>('downloadAndInstallApk', {'url': url});
+      installed = res == true;
+    } catch (_) {
+      installed = false;
+    } finally {
+      await sub.cancel();
+      if (context.mounted) {
+        Navigator.of(context, rootNavigator: true).maybePop();
+      }
+      AutoLockService().setTransientOverlayActive(false);
+    }
+
+    if (!installed) {
+      await openDownloadUrl(url);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              isFa
+                  ? 'لینک دانلود در مرورگر باز شد؛ پس از دانلود فایل APK را نصب کنید.'
+                  : 'Opened download link in browser!',
+            ),
+          ),
+        );
+      }
+    }
+  }
+
+  static Future<void> showUpdateDialogFromPush(
+    BuildContext context,
+    Map<String, dynamic> payload, {
+    required bool isFa,
+  }) async {
+    final latestVer = (payload['latestVersion'] as String?) ?? AppConstants.appVersion;
+    final latestBuild = (payload['latestBuild'] as int?) ?? AppConstants.appBuildNumber;
+    final url = (payload['downloadUrl'] as String?) ?? '';
+    final notes = (payload['releaseNotes'] as String?) ?? '';
+    if (latestBuild <= AppConstants.appBuildNumber || url.isEmpty) return;
+    await showUpdateDialog(
+      context,
+      AppUpdateInfo(
+        latestVersion: latestVer,
+        latestBuild: latestBuild,
+        downloadUrl: url,
+        releaseNotes: notes,
+      ),
+      isFa: isFa,
+    );
   }
 
   static Future<void> checkAndPromptUpdate(
@@ -132,81 +264,88 @@ class RelayDirectoryService {
     }
     if (!isNewer) return;
 
-    await showDialog(
-      context: context,
-      builder: (ctx) => Directionality(
-        textDirection: isFa ? TextDirection.rtl : TextDirection.ltr,
-        child: AlertDialog(
-          backgroundColor: const Color(0xFF14141E),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-            side: const BorderSide(color: Color(0xFF00FFA3), width: 1.5),
-          ),
-          title: Row(
-            children: [
-              const Icon(Icons.system_update_rounded, color: Color(0xFF00FFA3), size: 28),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  isFa
-                      ? 'آپدیت جدید SecretPlay (نسخه ${info.latestVersion})!'
-                      : 'SecretPlay Update Available (v${info.latestVersion})!',
-                  style: const TextStyle(color: Colors.white, fontSize: 16),
+    await showUpdateDialog(context, info, isFa: isFa);
+  }
+
+  static Future<void> showUpdateDialog(
+    BuildContext context,
+    AppUpdateInfo info, {
+    required bool isFa,
+  }) async {
+    if (_isUpdateDialogOpen || !context.mounted) return;
+    _isUpdateDialogOpen = true;
+    try {
+      await showDialog(
+        context: context,
+        builder: (ctx) => Directionality(
+          textDirection: isFa ? TextDirection.rtl : TextDirection.ltr,
+          child: AlertDialog(
+            backgroundColor: const Color(0xFF14141E),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+              side: const BorderSide(color: Color(0xFF00FFA3), width: 1.5),
+            ),
+            title: Row(
+              children: [
+                const Icon(Icons.system_update_rounded, color: Color(0xFF00FFA3), size: 28),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    isFa
+                        ? 'آپدیت جدید SecretPlay (نسخه ${info.latestVersion})!'
+                        : 'SecretPlay Update Available (v${info.latestVersion})!',
+                    style: const TextStyle(color: Colors.white, fontSize: 16),
+                  ),
                 ),
-              ),
-            ],
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                info.releaseNotes,
-                style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.5),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                isFa
-                    ? 'نسخه فعلی شما: ${AppConstants.appVersion}  →  نسخه جدید: ${info.latestVersion}'
-                    : 'Current: ${AppConstants.appVersion}  →  Latest: ${info.latestVersion}',
-                style: const TextStyle(color: Color(0xFF64D2FF), fontSize: 12),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: Text(isFa ? 'بعداً' : 'Later'),
+              ],
             ),
-            ElevatedButton.icon(
-              icon: const Icon(Icons.download_rounded),
-              label: Text(
-                isFa ? 'دانلود و نصب نسخه جدید' : 'Download & Install Update',
-                style: const TextStyle(fontWeight: FontWeight.bold),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  info.releaseNotes,
+                  style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.5),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  isFa
+                      ? 'نسخه فعلی شما: ${AppConstants.appVersion}  →  نسخه جدید: ${info.latestVersion}'
+                      : 'Current: ${AppConstants.appVersion}  →  Latest: ${info.latestVersion}',
+                  style: const TextStyle(color: Color(0xFF64D2FF), fontSize: 12),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: Text(isFa ? 'بعداً' : 'Later'),
               ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF00FFA3),
-                foregroundColor: Colors.black,
-              ),
-              onPressed: () async {
-                await openDownloadUrl(info.downloadUrl);
-                if (ctx.mounted) Navigator.of(ctx).pop();
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        isFa
-                            ? 'لینک دانلود نسخه جدید باز شد (و در کلیپ‌بورد کپی شد)!'
-                            : 'Update download link opened & copied!',
-                      ),
-                    ),
+              ElevatedButton.icon(
+                icon: const Icon(Icons.download_rounded),
+                label: Text(
+                  isFa ? 'دانلود و نصب نسخه جدید' : 'Download & Install Update',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF00FFA3),
+                  foregroundColor: Colors.black,
+                ),
+                onPressed: () async {
+                  Navigator.of(ctx).pop();
+                  await downloadAndInstallWithProgress(
+                    context,
+                    url: info.downloadUrl,
+                    isFa: isFa,
                   );
-                }
-              },
-            ),
-          ],
+                },
+              ),
+            ],
+          ),
         ),
-      ),
-    );
+      );
+    } finally {
+      _isUpdateDialogOpen = false;
+    }
   }
 }

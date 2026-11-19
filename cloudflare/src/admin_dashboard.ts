@@ -253,8 +253,8 @@ export const ADMIN_DASHBOARD_HTML = `<!DOCTYPE html>
         <hr style="border-color:#1d2238; margin:16px 0;" />
         <h2 style="margin-bottom:10px;">🚀 انتشار آپدیت جدید اپلیکیشن (In-App Auto-Updater)</h2>
         <div style="display:grid; grid-template-columns:1fr 110px; gap:8px; margin-bottom:8px;">
-          <input type="text" id="updVersion" placeholder="نسخه جدید (مثلاً 1.3.0)" value="1.2.0" />
-          <input type="number" id="updBuild" placeholder="Build #" value="2" />
+          <input type="text" id="updVersion" placeholder="نسخه جدید (مثلاً 1.3.0)" value="1.3.0" />
+          <input type="number" id="updBuild" placeholder="Build #" value="3" />
         </div>
         <input type="text" id="updUrl" placeholder="لینک مستقیم دانلود APK..." value="https://github.com/saayedh/SecretPlay/releases/download/v1.0.0/app-arm64-v8a-release.apk" style="width:100%; margin-bottom:8px;" />
         <div style="display:flex; gap:8px;">
@@ -458,16 +458,30 @@ export const ADMIN_DASHBOARD_HTML = `<!DOCTYPE html>
 
     async function publishUpdate() {
       const latestVersion = document.getElementById('updVersion').value.trim();
-      const latestBuild = parseInt(document.getElementById('updBuild').value, 10) || 2;
+      const latestBuild = parseInt(document.getElementById('updBuild').value, 10) || 3;
       const downloadUrl = document.getElementById('updUrl').value.trim();
       const releaseNotes = document.getElementById('updNotes').value.trim();
-      await sendAdminCommand({
-        command: 'publish_update',
-        latestVersion,
-        latestBuild,
-        downloadUrl,
-        releaseNotes,
+      const res = await fetch('/admin/api/command', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin-Key': getKey()
+        },
+        body: JSON.stringify({
+          command: 'publish_update',
+          latestVersion,
+          latestBuild,
+          downloadUrl,
+          releaseNotes,
+        })
       });
+      if (res.ok) {
+        const data = await res.json();
+        showBanner('📢 آپدیت منتشر شد! اعلان فوری برای ' + (data.notifiedSockets || 0) + ' کاربر آنلاین (در ' + (data.notifiedRooms || 0) + ' اتاق) ارسال شد ✓');
+        await loadOverview();
+      } else {
+        showBanner('خطا در انتشار آپدیت! رمز ادمین را بررسی کنید.', true);
+      }
     }
 
     loadOverview();

@@ -75,7 +75,7 @@ class _VoiceCallScreenState extends ConsumerState<VoiceCallScreen> {
           _isVideoCall = _voiceService.isVideoCall;
           _isCameraEnabled = _voiceService.isCameraEnabled;
         });
-        if (state == CallState.idle || state == CallState.ended) {
+        if (state == CallState.ended) {
           Navigator.of(context).pop();
         }
       }

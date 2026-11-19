@@ -1,7 +1,7 @@
 class AppConstants {
   static const String appName = 'SecretPlay';
-  static const String appVersion = '1.2.0';
-  static const int appBuildNumber = 2;
+  static const String appVersion = '1.3.0';
+  static const int appBuildNumber = 3;
 
   static const String cloudflareHttpBase =
       'https://secretplay-relay.enterprise-config-2026.workers.dev';

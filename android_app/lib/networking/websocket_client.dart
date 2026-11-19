@@ -21,10 +21,16 @@ class SecretPlayWebSocketClient {
   Timer? _reconnectTimer;
   String? _lastUrl;
   bool _manualDisconnect = false;
+  int _connGen = 0;
+  int _reconnectAttempts = 0;
+  String? _lastPeerDeviceId;
+  String? _lastPeerPublicKey;
   Future<void> Function()? _reconnectCallback;
   final List<String> _pendingOutboundQueue = [];
 
   String? get currentUrl => _lastUrl;
+  String? get lastPeerDeviceId => _lastPeerDeviceId;
+  String? get lastPeerPublicKey => _lastPeerPublicKey;
 
   ConnectionStatus _status = ConnectionStatus.disconnected;
   ConnectionStatus get status => _status;
@@ -52,6 +58,10 @@ class SecretPlayWebSocketClient {
       StreamController<Map<String, String>>.broadcast();
   Stream<Map<String, String>> get onPeerIdentity => _peerIdentityController.stream;
 
+  final StreamController<Map<String, dynamic>> _appUpdateController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  Stream<Map<String, dynamic>> get onAppUpdate => _appUpdateController.stream;
+
   void _setStatus(ConnectionStatus newStatus) {
     if (_status != newStatus) {
       _status = newStatus;
@@ -78,10 +88,23 @@ class SecretPlayWebSocketClient {
         _lastUrl == url &&
         (_status == ConnectionStatus.authenticated || _status == ConnectionStatus.peerOnline)) {
       _statusController.add(_status);
+      if (_lastPeerDeviceId != null && _lastPeerPublicKey != null) {
+        _peerIdentityController.add({
+          'peerDeviceId': _lastPeerDeviceId!,
+          'peerPublicKey': _lastPeerPublicKey!,
+        });
+      }
       return;
     }
 
+    if (_lastUrl != url) {
+      _lastPeerDeviceId = null;
+      _lastPeerPublicKey = null;
+      _pendingOutboundQueue.clear();
+    }
+
     _manualDisconnect = false;
+    _reconnectTimer?.cancel();
     _reconnectCallback = () => connect(
           config: config,
           deviceId: deviceId,
@@ -92,6 +115,7 @@ class SecretPlayWebSocketClient {
         );
 
     _closeSocketOnly();
+    final gen = ++_connGen;
     _lastUrl = url;
     _setStatus(ConnectionStatus.connecting);
 
@@ -101,13 +125,16 @@ class SecretPlayWebSocketClient {
 
       _channel!.stream.listen(
         (data) {
+          if (gen != _connGen) return;
           _handleIncomingRawMessage(data);
         },
         onError: (err) {
+          if (gen != _connGen) return;
           debugPrint('[WS] Channel error: $err');
           _handleUnexpectedDrop();
         },
         onDone: () {
+          if (gen != _connGen) return;
           debugPrint('[WS] Channel closed');
           _handleUnexpectedDrop();
         },
@@ -115,6 +142,7 @@ class SecretPlayWebSocketClient {
 
       // Wait for the WebSocket handshake to complete (critical on Flutter Web / Chrome where WebSocket stays in CONNECTING state until open)
       await _channel!.ready;
+      if (gen != _connGen) return;
 
       _setStatus(ConnectionStatus.connected);
 
@@ -127,6 +155,7 @@ class SecretPlayWebSocketClient {
       } else if (signNonce != null) {
         signature = await signNonce();
       }
+      if (gen != _connGen) return;
 
       final authPayload = <String, dynamic>{
         'type': 'auth',
@@ -142,8 +171,10 @@ class SecretPlayWebSocketClient {
 
       _startHeartbeat();
     } catch (e) {
-      debugPrint('[WS] Connection failed: $e');
-      disconnect();
+      debugPrint('[WS] Connection failed (will retry): $e');
+      if (gen == _connGen) {
+        _handleUnexpectedDrop();
+      }
     }
   }
 
@@ -168,11 +199,18 @@ class SecretPlayWebSocketClient {
     final pId = map['peerDeviceId'] as String?;
     final pKey = map['peerPublicKey'] as String?;
     if (pId != null && pId.isNotEmpty && pKey != null && pKey.isNotEmpty) {
+      _lastPeerDeviceId = pId;
+      _lastPeerPublicKey = pKey;
       _peerIdentityController.add({
         'peerDeviceId': pId,
         'peerPublicKey': pKey,
       });
     }
+  }
+
+  String? _normalizeEpoch(dynamic raw) {
+    if (raw is String && raw.trim().isNotEmpty) return raw.trim();
+    return null;
   }
 
   void _handleIncomingRawMessage(dynamic data) {
@@ -185,11 +223,15 @@ class SecretPlayWebSocketClient {
         case 'auth_result':
           final success = map['success'] == true;
           if (success) {
-            _sessionEpoch = map['sessionEpoch'] as String?;
+            _reconnectAttempts = 0;
+            _sessionEpoch = _normalizeEpoch(map['sessionEpoch']);
             _checkAndEmitPeerIdentity(map);
             final peerConnected = map['peerConnected'] == true;
             _setStatus(peerConnected ? ConnectionStatus.peerOnline : ConnectionStatus.authenticated);
             _flushPendingOutbound();
+            if (map['latestUpdate'] is Map<String, dynamic>) {
+              _appUpdateController.add(map['latestUpdate'] as Map<String, dynamic>);
+            }
           } else {
             disconnect();
           }
@@ -197,9 +239,13 @@ class SecretPlayWebSocketClient {
 
         case 'session_status':
           final peerOnline = map['peerOnline'] == true;
-          _sessionEpoch = map['sessionEpoch'] as String?;
+          _sessionEpoch = _normalizeEpoch(map['sessionEpoch']);
           _checkAndEmitPeerIdentity(map);
           _setStatus(peerOnline ? ConnectionStatus.peerOnline : ConnectionStatus.authenticated);
+          break;
+
+        case 'app_update':
+          _appUpdateController.add(map);
           break;
 
         case 'pairing_confirm':
@@ -245,9 +291,8 @@ class SecretPlayWebSocketClient {
     _sessionTimeoutTimer = Timer(
       const Duration(milliseconds: AppConstants.sessionTimeoutMs),
       () {
-        debugPrint('[WS] Server heartbeat timed out!');
-        _terminateController.add('heartbeat_timeout');
-        disconnect();
+        debugPrint('[WS] Server heartbeat timed out! Reconnecting...');
+        _handleUnexpectedDrop();
       },
     );
   }
@@ -302,7 +347,11 @@ class SecretPlayWebSocketClient {
     _setStatus(ConnectionStatus.disconnected);
     if (!_manualDisconnect && _reconnectCallback != null) {
       _reconnectTimer?.cancel();
-      _reconnectTimer = Timer(const Duration(seconds: 1), () {
+      final delaySec = _reconnectAttempts == 0
+          ? 1
+          : (_reconnectAttempts == 1 ? 2 : (_reconnectAttempts == 2 ? 4 : 6));
+      _reconnectAttempts++;
+      _reconnectTimer = Timer(Duration(seconds: delaySec), () {
         if (!_manualDisconnect && _status == ConnectionStatus.disconnected) {
           _reconnectCallback?.call();
         }
@@ -311,21 +360,27 @@ class SecretPlayWebSocketClient {
   }
 
   void _closeSocketOnly() {
+    _connGen++;
     _heartbeatTimer?.cancel();
     _heartbeatTimer = null;
     _sessionTimeoutTimer?.cancel();
     _sessionTimeoutTimer = null;
-    _channel?.sink.close();
+    try {
+      _channel?.sink.close();
+    } catch (_) {}
     _channel = null;
   }
 
   void disconnect() {
     _manualDisconnect = true;
+    _reconnectAttempts = 0;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     _pendingOutboundQueue.clear();
     _closeSocketOnly();
     _lastUrl = null;
+    _lastPeerDeviceId = null;
+    _lastPeerPublicKey = null;
     _sessionEpoch = null;
     _setStatus(ConnectionStatus.disconnected);
   }
@@ -337,5 +392,6 @@ class SecretPlayWebSocketClient {
     _signalController.close();
     _terminateController.close();
     _peerIdentityController.close();
+    _appUpdateController.close();
   }
 }

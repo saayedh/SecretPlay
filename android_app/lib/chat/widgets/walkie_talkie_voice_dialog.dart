@@ -4,6 +4,8 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:permission_handler/permission_handler.dart';
+import '../../security/auto_lock_service.dart';
 
 class WalkieTalkieVoiceResult {
   final String audioBase64;
@@ -136,6 +138,13 @@ class _WalkieTalkieVoiceDialogState extends State<WalkieTalkieVoiceDialog> {
 
   Future<void> _toggleRecord() async {
     if (!_isRecording) {
+      if (!kIsWeb) {
+        AutoLockService().setTransientOverlayActive(true);
+        try {
+          await Permission.microphone.request();
+        } catch (_) {}
+        AutoLockService().setTransientOverlayActive(false);
+      }
       _usingNativeMic = await WalkieTalkieVoiceService.startNativeRecording();
       setState(() {
         _isRecording = true;

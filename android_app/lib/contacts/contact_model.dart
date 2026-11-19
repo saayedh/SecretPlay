@@ -66,7 +66,11 @@ class SecretContact {
     int hash2 = 2166136261;
     for (final b in bytes) {
       hash1 = ((hash1 << 5) + hash1 + b) & 0x7FFFFFFF;
-      hash2 = ((hash2 ^ b) * 16777619) & 0x7FFFFFFF;
+      // 16-bit split multiplication guarantees exact 32-bit FNV-1a parity between Android VM & Web JS
+      final x = hash2 ^ b;
+      final lo = x & 0xFFFF;
+      final hi = (x >> 16) & 0xFFFF;
+      hash2 = ((lo * 16777619) + (((hi * 16777619) & 0xFFFF) << 16)) & 0x7FFFFFFF;
     }
     final part1 = (100 + (hash1 % 900)).toString();
     final part2 = (100 + (hash2 % 900)).toString();

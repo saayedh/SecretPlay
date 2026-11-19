@@ -4,6 +4,8 @@ import 'package:cryptography/cryptography.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import '../core/constants.dart';
+import '../core/relay_http_io.dart' if (dart.library.js_interop) '../core/relay_http_web.dart';
 import '../cryptography/crypto_service.dart';
 import '../networking/network_mode.dart';
 import '../networking/websocket_client.dart';
@@ -246,10 +248,15 @@ class WebRtcVoiceService {
         );
       } catch (e) {
         debugPrint('[WebRTC] Decrypt signal warning: $e');
+        return '{}';
       }
     }
 
-    return utf8.decode(base64Decode(enc));
+    try {
+      return utf8.decode(base64Decode(enc));
+    } catch (_) {
+      return '{}';
+    }
   }
 
   void _initSignalingListener() {
@@ -301,21 +308,34 @@ class WebRtcVoiceService {
     });
   }
 
-  Map<String, dynamic> _getIceServers(NetworkMode mode) {
+  Future<Map<String, dynamic>> _getIceServers(NetworkMode mode) async {
     if (mode == NetworkMode.local) {
       return {
         'iceServers': <Map<String, dynamic>>[],
         'sdpSemantics': 'unified-plan',
       };
-    } else {
-      return {
-        'iceServers': [
-          {'urls': 'stun:stun.cloudflare.com:3478'},
-          {'urls': 'stun:stun.l.google.com:19302'},
-        ],
-        'sdpSemantics': 'unified-plan',
-      };
     }
+    try {
+      final raw = await relayHttpGet('${AppConstants.cloudflareHttpBase}/turn')
+          .timeout(const Duration(seconds: 2));
+      if (raw != null) {
+        final map = jsonDecode(raw) as Map<String, dynamic>;
+        if (map['iceServers'] is List && (map['iceServers'] as List).isNotEmpty) {
+          return {
+            'iceServers': map['iceServers'],
+            'sdpSemantics': 'unified-plan',
+          };
+        }
+      }
+    } catch (_) {}
+    return {
+      'iceServers': [
+        {'urls': 'stun:stun.cloudflare.com:3478'},
+        {'urls': 'stun:stun.l.google.com:19302'},
+        {'urls': 'stun:stun1.l.google.com:19302'},
+      ],
+      'sdpSemantics': 'unified-plan',
+    };
   }
 
   Future<void> startCall({
@@ -324,7 +344,7 @@ class WebRtcVoiceService {
     required NetworkMode networkMode,
     bool video = false,
   }) async {
-    _cryptoService.resetInboundSequence();
+    _cryptoService.resetSignalInboundSequence();
     _myDeviceId = myDeviceId;
     if (peerDeviceId.isNotEmpty) _peerDeviceId = peerDeviceId;
     _networkMode = networkMode;
@@ -358,7 +378,7 @@ class WebRtcVoiceService {
     required String myDeviceId,
     required NetworkMode networkMode,
   }) async {
-    _cryptoService.resetInboundSequence();
+    _cryptoService.resetSignalInboundSequence();
     _myDeviceId = myDeviceId;
     if (peerDeviceId.isNotEmpty && peerDeviceId != 'peer') {
       _peerDeviceId = peerDeviceId;
@@ -412,6 +432,8 @@ class WebRtcVoiceService {
       'timestamp': DateTime.now().millisecondsSinceEpoch,
     });
     await _stopForegroundCallService();
+    _setCallState(CallState.ended);
+    _setCallState(CallState.ended);
     _setCallState(CallState.idle);
   }
 
@@ -539,7 +561,7 @@ class WebRtcVoiceService {
     if (_peerConnection != null) return;
     await ensureRenderersInitialized();
 
-    final config = _getIceServers(mode);
+    final config = await _getIceServers(mode);
     _peerConnection = await createPeerConnection(config);
     _remoteDescSet = false;
 
@@ -645,6 +667,13 @@ class WebRtcVoiceService {
         _attemptIceReconnection();
       } else if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
         endCall(notifyPeer: false);
+      }
+    };
+
+    _peerConnection!.onIceConnectionState = (state) {
+      if (state == RTCIceConnectionState.RTCIceConnectionStateConnected ||
+          state == RTCIceConnectionState.RTCIceConnectionStateCompleted) {
+        _setCallState(CallState.connected);
       }
     };
   }
@@ -755,6 +784,7 @@ class WebRtcVoiceService {
     await _peerConnection?.close();
     _peerConnection = null;
 
+    _setCallState(CallState.ended);
     _setCallState(CallState.idle);
   }
 
