@@ -18,6 +18,12 @@ class SecretPlayWebSocketClient {
   WebSocketChannel? _channel;
   Timer? _heartbeatTimer;
   Timer? _sessionTimeoutTimer;
+  Timer? _reconnectTimer;
+  String? _lastUrl;
+  bool _manualDisconnect = false;
+  Future<void> Function()? _reconnectCallback;
+
+  String? get currentUrl => _lastUrl;
 
   ConnectionStatus _status = ConnectionStatus.disconnected;
   ConnectionStatus get status => _status;
@@ -60,14 +66,33 @@ class SecretPlayWebSocketClient {
     FutureOr<String> Function()? signNonce,
     FutureOr<String> Function(String nonce, int timestamp)? signChallenge,
   }) async {
-    disconnect();
-    _setStatus(ConnectionStatus.connecting);
-
     final activeToken = (pairToken ?? config.pairToken).trim().toUpperCase();
     final effectiveConfig = activeToken.isNotEmpty
         ? config.copyWith(pairToken: activeToken)
         : config;
     final url = effectiveConfig.activeWsUrl;
+
+    // Keep existing live connection if already connected/authenticated to the exact same room
+    if (_channel != null &&
+        _lastUrl == url &&
+        (_status == ConnectionStatus.authenticated || _status == ConnectionStatus.peerOnline)) {
+      _statusController.add(_status);
+      return;
+    }
+
+    _manualDisconnect = false;
+    _reconnectCallback = () => connect(
+          config: config,
+          deviceId: deviceId,
+          pairToken: pairToken,
+          publicKey: publicKey,
+          signNonce: signNonce,
+          signChallenge: signChallenge,
+        );
+
+    _closeSocketOnly();
+    _lastUrl = url;
+    _setStatus(ConnectionStatus.connecting);
 
     try {
       final uri = Uri.parse(url);
@@ -79,11 +104,11 @@ class SecretPlayWebSocketClient {
         },
         onError: (err) {
           debugPrint('[WS] Channel error: $err');
-          disconnect();
+          _handleUnexpectedDrop();
         },
         onDone: () {
           debugPrint('[WS] Channel closed');
-          disconnect();
+          _handleUnexpectedDrop();
         },
       );
 
@@ -242,13 +267,34 @@ class SecretPlayWebSocketClient {
     disconnect();
   }
 
-  void disconnect() {
+  void _handleUnexpectedDrop() {
+    _closeSocketOnly();
+    _setStatus(ConnectionStatus.disconnected);
+    if (!_manualDisconnect && _reconnectCallback != null) {
+      _reconnectTimer?.cancel();
+      _reconnectTimer = Timer(const Duration(seconds: 3), () {
+        if (!_manualDisconnect && _status == ConnectionStatus.disconnected) {
+          _reconnectCallback?.call();
+        }
+      });
+    }
+  }
+
+  void _closeSocketOnly() {
     _heartbeatTimer?.cancel();
     _heartbeatTimer = null;
     _sessionTimeoutTimer?.cancel();
     _sessionTimeoutTimer = null;
     _channel?.sink.close();
     _channel = null;
+  }
+
+  void disconnect() {
+    _manualDisconnect = true;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    _closeSocketOnly();
+    _lastUrl = null;
     _sessionEpoch = null;
     _setStatus(ConnectionStatus.disconnected);
   }

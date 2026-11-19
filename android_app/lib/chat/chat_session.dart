@@ -16,6 +16,8 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
   String? _peerDeviceId;
   String? _peerPublicKeyBase64;
   SimpleKeyPair? _myIdentityKeyPair;
+  String _currentRoomToken = 'default';
+  final Map<String, List<EphemeralChatMessage>> _roomHistories = {};
 
   StreamSubscription? _msgSub;
   StreamSubscription? _termSub;
@@ -56,13 +58,29 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
     _burnSweepTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       final now = DateTime.now().millisecondsSinceEpoch;
       if (state.any((m) => m.expiresAtMs != null && m.expiresAtMs! <= now)) {
-        state = state.where((m) => m.expiresAtMs == null || m.expiresAtMs! > now).toList();
+        final filtered = state.where((m) => m.expiresAtMs == null || m.expiresAtMs! > now).toList();
+        state = filtered;
+        _roomHistories[_currentRoomToken] = filtered;
       }
     });
   }
 
+  void switchRoom(String roomToken) {
+    final clean = roomToken.trim().toUpperCase();
+    final nextRoom = clean.isEmpty ? 'default' : clean;
+    if (_currentRoomToken == nextRoom) return;
+    _roomHistories[_currentRoomToken] = state;
+    _currentRoomToken = nextRoom;
+    state = List<EphemeralChatMessage>.from(_roomHistories[nextRoom] ?? const []);
+  }
+
+  void _setRoomState(List<EphemeralChatMessage> next) {
+    state = next;
+    _roomHistories[_currentRoomToken] = next;
+  }
+
   void removeMessageById(String msgId) {
-    state = state.where((m) => m.id != msgId).toList();
+    _setRoomState(state.where((m) => m.id != msgId).toList());
   }
 
   void initializeSession({
@@ -123,7 +141,7 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
     );
 
     // Append to memory state
-    state = [...state, outgoingMsg];
+    _setRoomState([...state, outgoingMsg]);
 
     try {
       final serializedPayload = outgoingMsg.toEncryptedPayloadString();
@@ -150,17 +168,17 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
         'timestamp': DateTime.now().millisecondsSinceEpoch,
       });
 
-      state = [
+      _setRoomState([
         for (final m in state)
           if (m.id == outgoingMsg.id) m.copyWith(status: MessageDeliveryStatus.sent) else m
-      ];
+      ]);
       return true;
     } catch (e) {
       debugPrint('[Chat] Encryption error: $e');
-      state = [
+      _setRoomState([
         for (final m in state)
           if (m.id == outgoingMsg.id) m.copyWith(status: MessageDeliveryStatus.failed) else m
-      ];
+      ]);
       return false;
     }
   }
@@ -171,7 +189,7 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
       final msgId = payload['msgId'] as String?;
       final ackStatus = payload['status'] as String?;
       if (msgId != null) {
-        state = [
+        _setRoomState([
           for (final m in state)
             if (m.id == msgId)
               m.copyWith(
@@ -183,7 +201,7 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
               )
             else
               m
-        ];
+        ]);
       }
       return;
     }
@@ -217,7 +235,7 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
         status: MessageDeliveryStatus.relayed,
       );
 
-      state = [...state, msg];
+      _setRoomState([...state, msg]);
 
       if (msg.isFlashScreen) {
         _flashStreamController.add(msg);
@@ -241,6 +259,7 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
   /// Strict memory purge: Wipes all ephemeral messages and key references from memory
   void clearSession() {
     state = [];
+    _roomHistories.clear();
     _myIdentityKeyPair = null;
     _cryptoService.resetSequence();
     debugPrint('[ChatSession] Session wiped cleanly from memory.');

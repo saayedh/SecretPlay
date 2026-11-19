@@ -80,6 +80,7 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
   @override
   void initState() {
     super.initState();
+    _connectionStatus = ref.read(wsClientProvider).status;
     AutoLockService().addLockListener(_onAutoLock);
     AutoLockService().setStandbyServiceEnabled(true);
     _uiCountdownTick = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -170,6 +171,7 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
     _peerPublicKey = peerPub;
 
     final sessionNotifier = ref.read(chatSessionProvider.notifier);
+    sessionNotifier.switchRoom(savedToken);
     if (peerId != null && peerPub != null && peerPub.isNotEmpty) {
       sessionNotifier.initializeSession(
         myDeviceId: deviceId,
