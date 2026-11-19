@@ -1,6 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"
-    package="com.secretplay.app">
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Network permissions for Cloudflare and Local offline Wi-Fi/Hotspot -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -25,9 +24,8 @@
     <application
         android:label="SecretPlay"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher"
+        android:icon="@drawable/ic_launcher_foreground"
         android:allowBackup="false"
-        android:dataExtractionRules="@null"
         android:fullBackupContent="false"
         android:usesCleartextTraffic="true"
         tools:targetApi="34">
