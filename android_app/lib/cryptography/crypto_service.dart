@@ -39,6 +39,11 @@ class CryptoService {
     _lastSignalInSeq = 0;
   }
 
+  void resetInboundSequence() {
+    _lastInSeq = 0;
+    _lastSignalInSeq = 0;
+  }
+
   /// Generates a long-term Ed25519 identity keypair backed by a 32-byte cryptographic seed
   Future<SimpleKeyPair> generateIdentityKeyPair() async {
     return await _ed25519.newKeyPair();

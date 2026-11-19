@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../../core/app_localizations.dart';
+import '../../core/relay_directory_service.dart';
 import '../../cryptography/crypto_service.dart';
 import '../../networking/network_mode.dart';
 import '../../networking/screens/network_mode_screen.dart';
@@ -139,6 +140,19 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
         _isLoading = false;
       });
     }
+
+    // Register this device's SecretPlay ID & public key in Cloudflare directory so partners can message us even while offline!
+    RelayDirectoryService.registerIdentity(
+      deviceId: deviceId,
+      secretNumber: myNumber,
+      publicKeyBase64: pubKey,
+    );
+
+    // Check for any published app update
+    if (mounted) {
+      final isFa = ref.read(appLocaleProvider) == AppLang.fa;
+      RelayDirectoryService.checkAndPromptUpdate(context, isFa: isFa);
+    }
   }
 
   Future<void> _persistContacts(List<SecretContact> list) async {
@@ -169,6 +183,16 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
     final roomToken = scannedRoomToken ??
         SecretContact.computePairRoomToken(_mySecretNumber, normalizedId);
 
+    String? resolvedPeerDeviceId;
+    String? resolvedPeerPublicKey = scannedPeerKey;
+    if (resolvedPeerPublicKey == null) {
+      final found = await RelayDirectoryService.lookupBySecretNumber(normalizedId);
+      if (found != null) {
+        resolvedPeerDeviceId = found['deviceId'];
+        resolvedPeerPublicKey = found['publicKey'];
+      }
+    }
+
     final existingIndex = _contacts.indexWhere(
       (c) => c.contactId == normalizedId || c.roomToken == roomToken,
     );
@@ -182,7 +206,8 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
         alias: (customAlias != null && customAlias.trim().isNotEmpty)
             ? customAlias.trim()
             : existing.alias,
-        peerPublicKey: scannedPeerKey ?? existing.peerPublicKey,
+        peerDeviceId: resolvedPeerDeviceId ?? existing.peerDeviceId,
+        peerPublicKey: resolvedPeerPublicKey ?? existing.peerPublicKey,
         lastActiveAt: now,
       );
       _contacts[existingIndex] = target;
@@ -193,7 +218,8 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
             ? customAlias.trim()
             : normalizedId,
         roomToken: roomToken,
-        peerPublicKey: scannedPeerKey,
+        peerDeviceId: resolvedPeerDeviceId,
+        peerPublicKey: resolvedPeerPublicKey,
         addedAt: now,
         lastActiveAt: now,
       );
@@ -426,6 +452,15 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
                   MaterialPageRoute(builder: (_) => const NetworkModeScreen()),
                 );
               },
+            ),
+            IconButton(
+              icon: const Icon(Icons.system_update_rounded, color: Color(0xFF00FFA3)),
+              tooltip: s.tr('بررسی آپدیت جدید', 'Check for Updates'),
+              onPressed: () => RelayDirectoryService.checkAndPromptUpdate(
+                context,
+                isFa: s.isFa,
+                manualCheck: true,
+              ),
             ),
             IconButton(
               icon: const Icon(Icons.security_rounded, color: Colors.white70),

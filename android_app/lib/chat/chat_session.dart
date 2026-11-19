@@ -78,10 +78,13 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
     _myIdentityKeyPair = myIdentityKeyPair;
     if (peerChanged) {
       _cryptoService.resetSequence();
+    } else {
+      // Reset inbound replay watermarks on reconnect so a restarted peer can send from seq=1
+      _cryptoService.resetInboundSequence();
     }
   }
 
-  Future<void> sendMessage(
+  Future<bool> sendMessage(
     String text, {
     ChatContentType contentType = ChatContentType.text,
     String? mediaBase64,
@@ -92,10 +95,10 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
     bool isCyberPitch = false,
     int? voiceDurationSec,
   }) async {
-    if (contentType == ChatContentType.text && text.trim().isEmpty) return;
+    if (contentType == ChatContentType.text && text.trim().isEmpty) return false;
     if (_peerPublicKeyBase64 == null || _myIdentityKeyPair == null) {
       debugPrint('[Chat] Cannot send message: peer public key not yet exchanged.');
-      return;
+      return false;
     }
     final activeEpoch = _wsClient.sessionEpoch ?? 'offline-room';
     final now = DateTime.now().millisecondsSinceEpoch;
@@ -151,12 +154,14 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
         for (final m in state)
           if (m.id == outgoingMsg.id) m.copyWith(status: MessageDeliveryStatus.sent) else m
       ];
+      return true;
     } catch (e) {
       debugPrint('[Chat] Encryption error: $e');
       state = [
         for (final m in state)
           if (m.id == outgoingMsg.id) m.copyWith(status: MessageDeliveryStatus.failed) else m
       ];
+      return false;
     }
   }
 

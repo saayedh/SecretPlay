@@ -66,6 +66,73 @@ export default {
       return stub.fetch(new Request(targetUrl.toString(), request));
     }
 
+    // CORS preflight for Flutter Web / Mobile HTTP calls
+    if (request.method === 'OPTIONS') {
+      return new Response(null, {
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type, X-Admin-Key',
+        },
+      });
+    }
+
+    // Register device SecretPlay ID (SP-XXX-XXX) + public key in directory on app unlock
+    if (url.pathname === '/register' && request.method === 'POST') {
+      const id = env.SESSION_RELAY.idFromName('admin-registry');
+      const stub = env.SESSION_RELAY.get(id);
+      const body = (await request.json()) as Record<string, unknown>;
+      const cfCountry = request.headers.get('CF-IPCountry') || 'UN';
+      const rawIp = request.headers.get('CF-Connecting-IP') || '0.0.0.0';
+      const ipParts = rawIp.split('.');
+      const ipMasked =
+        ipParts.length === 4 ? `${ipParts[0]}.${ipParts[1]}.*.*` : rawIp.slice(0, 10) + '***';
+      const res = await stub.fetch(
+        new Request('https://internal/internal-admin/telemetry', {
+          method: 'POST',
+          body: JSON.stringify({
+            event: 'register',
+            deviceId: body.deviceId,
+            secretNumber: body.secretNumber,
+            publicKey: body.publicKey,
+            country: cfCountry,
+            ipMasked,
+            roomToken: 'directory',
+          }),
+        })
+      );
+      const json = await res.json();
+      return Response.json(json, {
+        headers: { 'Access-Control-Allow-Origin': '*' },
+      });
+    }
+
+    // Lookup peer public key & deviceId by SecretPlay ID (enables offline E2EE messaging!)
+    if (url.pathname === '/lookup' && request.method === 'GET') {
+      const id = env.SESSION_RELAY.idFromName('admin-registry');
+      const stub = env.SESSION_RELAY.get(id);
+      const targetUrl = new URL(request.url);
+      targetUrl.pathname = '/internal-admin/lookup';
+      const res = await stub.fetch(new Request(targetUrl.toString(), request));
+      const data = await res.json();
+      return Response.json(data, {
+        headers: { 'Access-Control-Allow-Origin': '*' },
+      });
+    }
+
+    // In-App Auto-Update Checker endpoint
+    if (url.pathname === '/version' && request.method === 'GET') {
+      const id = env.SESSION_RELAY.idFromName('admin-registry');
+      const stub = env.SESSION_RELAY.get(id);
+      const targetUrl = new URL(request.url);
+      targetUrl.pathname = '/internal-admin/version';
+      const res = await stub.fetch(new Request(targetUrl.toString(), request));
+      const data = await res.json();
+      return Response.json(data, {
+        headers: { 'Access-Control-Allow-Origin': '*' },
+      });
+    }
+
     // Health check endpoint
     if (url.pathname === '/health') {
       const id = env.SESSION_RELAY.idFromName(resolveRoomName(url));

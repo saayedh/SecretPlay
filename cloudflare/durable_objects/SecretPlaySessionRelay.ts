@@ -35,6 +35,7 @@ interface SocketAttachment {
 interface AdminDeviceRow {
   device_id: string;
   secret_number: string;
+  public_key: string;
   country: string;
   ip_masked: string;
   room_token: string;
@@ -56,6 +57,10 @@ interface AdminConfigRow {
   total_messages: number;
   total_calls: number;
   admin_secret_hash: string;
+  latest_version?: string;
+  latest_build?: number;
+  download_url?: string;
+  release_notes?: string;
 }
 
 function deriveSecretNumber(deviceId: string, pubKey: string): string {
@@ -139,6 +144,7 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
         CREATE TABLE IF NOT EXISTS admin_devices (
           device_id TEXT PRIMARY KEY,
           secret_number TEXT,
+          public_key TEXT DEFAULT '',
           country TEXT,
           ip_masked TEXT,
           room_token TEXT,
@@ -153,6 +159,9 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
           note TEXT DEFAULT ''
         );
       `);
+      this.ctx.storage.sql.exec(`ALTER TABLE admin_devices ADD COLUMN public_key TEXT DEFAULT '';`);
+    } catch {}
+    try {
       this.ctx.storage.sql.exec(`
         CREATE TABLE IF NOT EXISTS admin_config (
           id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -160,11 +169,19 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
           whitelist_mode INTEGER DEFAULT 0,
           total_messages INTEGER DEFAULT 0,
           total_calls INTEGER DEFAULT 0,
-          admin_secret_hash TEXT DEFAULT 'SP-ADMIN-2026'
+          admin_secret_hash TEXT DEFAULT 'SP-ADMIN-2026',
+          latest_version TEXT DEFAULT '1.2.0',
+          latest_build INTEGER DEFAULT 2,
+          download_url TEXT DEFAULT 'https://github.com/saayedh/SecretPlay/releases/download/v1.0.0/app-arm64-v8a-release.apk',
+          release_notes TEXT DEFAULT 'نسخه جدید SecretPlay با رفع باگ چت، تماس تصویری و قابلیت‌های جدید آماده است!'
         );
       `);
+      this.ctx.storage.sql.exec(`ALTER TABLE admin_config ADD COLUMN latest_version TEXT DEFAULT '1.2.0';`);
+      this.ctx.storage.sql.exec(`ALTER TABLE admin_config ADD COLUMN latest_build INTEGER DEFAULT 2;`);
+      this.ctx.storage.sql.exec(`ALTER TABLE admin_config ADD COLUMN download_url TEXT DEFAULT 'https://github.com/saayedh/SecretPlay/releases/download/v1.0.0/app-arm64-v8a-release.apk';`);
+      this.ctx.storage.sql.exec(`ALTER TABLE admin_config ADD COLUMN release_notes TEXT DEFAULT 'نسخه جدید SecretPlay آماده است!';`);
     } catch {
-      // Ignore in unit test mock SQL storage if not needed
+      // Ignore if columns already exist or in unit test mock SQL storage
     }
   }
 
@@ -676,6 +693,7 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
               event: 'auth',
               deviceId,
               secretNumber: deriveSecretNumber(deviceId, authMsg.publicKey || ''),
+              publicKey: authMsg.publicKey || '',
               country,
               ipMasked,
               roomToken: authMsg.pairToken || 'primary-pair',
@@ -810,15 +828,29 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
     }
 
     // Relay to the other paired device if online, or queue encrypted envelope if offline (in token/contact rooms)
-    const recipient = sockets.get(msg.recipientDeviceId);
+    let recipient = sockets.get(msg.recipientDeviceId);
     if (!recipient || msg.recipientDeviceId === senderDeviceId) {
+      for (const [dId, peerWs] of sockets.entries()) {
+        if (dId !== senderDeviceId) {
+          recipient = peerWs;
+          break;
+        }
+      }
+    }
+    if (!recipient) {
       const pair = this.getPairRecord();
+      const targetDeviceId =
+        (pair && pair.device_a_id === senderDeviceId
+          ? pair.device_b_id
+          : pair && pair.device_b_id === senderDeviceId
+            ? pair.device_a_id
+            : null) || msg.recipientDeviceId;
       const isTokenRoom = pair && pair.pair_id && pair.pair_id !== 'pair-primary';
-      if (isTokenRoom && msg.recipientDeviceId && msg.recipientDeviceId !== senderDeviceId) {
-        const list = this.offlineQueue.get(msg.recipientDeviceId) ?? [];
+      if (isTokenRoom && targetDeviceId && targetDeviceId !== senderDeviceId) {
+        const list = this.offlineQueue.get(targetDeviceId) ?? [];
         if (list.length < 100) {
           list.push(msg);
-          this.offlineQueue.set(msg.recipientDeviceId, list);
+          this.offlineQueue.set(targetDeviceId, list);
         }
         ws.send(
           JSON.stringify({
@@ -1221,9 +1253,10 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
     // 1. Telemetry ingestion from room Durable Objects into 'admin-registry' DO
     if (path === '/internal-admin/telemetry' && request.method === 'POST') {
       const body = (await request.json()) as {
-        event: 'auth' | 'msg' | 'call';
+        event: 'auth' | 'msg' | 'call' | 'register';
         deviceId: string;
         secretNumber?: string;
+        publicKey?: string;
         country?: string;
         ipMasked?: string;
         roomToken?: string;
@@ -1255,7 +1288,7 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
         return Response.json({ ok: true });
       }
 
-      // event === 'auth': upsert device install & check ban/lockdown/whitelist
+      // event === 'auth' or 'register': upsert device install & check ban/lockdown/whitelist
       const cur = this.ctx.storage.sql.exec(
         `SELECT * FROM admin_devices WHERE device_id = ?;`,
         deviceId
@@ -1266,13 +1299,14 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
         const defaultApproved = cfg.whitelist_mode ? 0 : 1;
         this.ctx.storage.sql.exec(
           `INSERT INTO admin_devices
-           (device_id, secret_number, country, ip_masked, room_token, first_seen, last_seen, connect_count, msg_count, call_count, is_banned, is_approved, ban_reason, note)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, 0, 0, ?, '', '');`,
+           (device_id, secret_number, public_key, country, ip_masked, room_token, first_seen, last_seen, connect_count, msg_count, call_count, is_banned, is_approved, ban_reason, note)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 0, 0, ?, '', '');`,
           deviceId,
           body.secretNumber || 'SP-000-000',
+          body.publicKey || '',
           body.country || 'UN',
           body.ipMasked || '0.0.*.*',
-          body.roomToken || 'primary-pair',
+          body.roomToken || 'directory',
           now,
           now,
           defaultApproved
@@ -1294,13 +1328,14 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
         const dev = existing[0];
         this.ctx.storage.sql.exec(
           `UPDATE admin_devices
-           SET last_seen = ?, connect_count = connect_count + 1, room_token = ?, country = ?, ip_masked = ?, secret_number = ?
+           SET last_seen = ?, connect_count = connect_count + 1, room_token = ?, country = ?, ip_masked = ?, secret_number = ?, public_key = COALESCE(NULLIF(?, ''), public_key)
            WHERE device_id = ?;`,
           now,
           body.roomToken || dev.room_token,
           body.country || dev.country,
           body.ipMasked || dev.ip_masked,
           body.secretNumber || dev.secret_number,
+          body.publicKey || '',
           deviceId
         );
         if (dev.is_banned) {
@@ -1323,6 +1358,45 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
         }
         return Response.json({ allowed: true });
       }
+    }
+
+    // Public directory lookup by SecretPlay ID (SP-XXX-XXX) so offline messaging works immediately!
+    if (path === '/internal-admin/lookup' && request.method === 'GET') {
+      const targetId = (url.searchParams.get('id') || '').trim().toUpperCase();
+      if (!targetId) {
+        return Response.json({ found: false }, { status: 400 });
+      }
+      const cur = this.ctx.storage.sql.exec(
+        `SELECT device_id, secret_number, public_key, last_seen, is_banned FROM admin_devices WHERE secret_number = ? ORDER BY last_seen DESC LIMIT 1;`,
+        targetId
+      );
+      const rows = [...cur] as unknown as AdminDeviceRow[];
+      if (rows.length === 0 || rows[0].is_banned || !rows[0].public_key) {
+        return Response.json({ found: false });
+      }
+      return Response.json({
+        found: true,
+        deviceId: rows[0].device_id,
+        secretNumber: rows[0].secret_number,
+        publicKey: rows[0].public_key,
+        lastSeen: rows[0].last_seen,
+      });
+    }
+
+    // Public App Version & Update Metadata endpoint
+    if (path === '/internal-admin/version' && request.method === 'GET') {
+      const cfg = this.getAdminConfig();
+      return Response.json({
+        latestVersion: cfg.latest_version || '1.2.0',
+        latestBuild: cfg.latest_build || 2,
+        downloadUrl:
+          cfg.download_url ||
+          'https://github.com/saayedh/SecretPlay/releases/download/v1.0.0/app-arm64-v8a-release.apk',
+        releaseNotes:
+          cfg.release_notes ||
+          'نسخه جدید SecretPlay با رفع باگ پیام و تماس و قابلیت‌های جدید آماده دانلود است!',
+        timestamp: now,
+      });
     }
 
     // 2. Room-level immediate kick/reset invoked by Admin Registry
@@ -1418,6 +1492,7 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
           | 'toggle_lockdown'
           | 'toggle_whitelist'
           | 'change_admin_key'
+          | 'publish_update'
           | 'reset_room'
           | 'revoke_room';
         deviceId?: string;
@@ -1426,6 +1501,10 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
         note?: string;
         enabled?: boolean;
         newKey?: string;
+        latestVersion?: string;
+        latestBuild?: number;
+        downloadUrl?: string;
+        releaseNotes?: string;
       };
 
       switch (cmd.command) {
@@ -1522,6 +1601,21 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
               cmd.newKey.trim()
             );
           }
+          break;
+
+        case 'publish_update':
+          this.ctx.storage.sql.exec(
+            `UPDATE admin_config
+             SET latest_version = COALESCE(NULLIF(?, ''), latest_version),
+                 latest_build = COALESCE(?, latest_build),
+                 download_url = COALESCE(NULLIF(?, ''), download_url),
+                 release_notes = COALESCE(NULLIF(?, ''), release_notes)
+             WHERE id = 1;`,
+            cmd.latestVersion || '',
+            cmd.latestBuild ?? null,
+            cmd.downloadUrl || '',
+            cmd.releaseNotes || ''
+          );
           break;
 
         case 'reset_room':

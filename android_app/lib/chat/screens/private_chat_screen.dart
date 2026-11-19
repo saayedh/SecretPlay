@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart' show DateFormat;
 import '../../core/app_localizations.dart';
+import '../../core/relay_directory_service.dart';
 import '../../core/theme.dart';
 import '../../contacts/contact_model.dart';
 import '../../security/auto_lock_service.dart';
@@ -147,8 +148,22 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
       setState(() => _activeToken = savedToken);
     }
 
-    final peerId = widget.activeContact?.peerDeviceId ?? await keystore.getPeerDeviceId();
-    final peerPub = widget.activeContact?.peerPublicKey ?? await keystore.getPeerPublicKey();
+    String? peerId = widget.activeContact != null
+        ? widget.activeContact!.peerDeviceId
+        : await keystore.getPeerDeviceId();
+    String? peerPub = widget.activeContact != null
+        ? widget.activeContact!.peerPublicKey
+        : await keystore.getPeerPublicKey();
+
+    if ((peerPub == null || peerPub.isEmpty) && widget.activeContact != null) {
+      final lookedUp = await RelayDirectoryService.lookupBySecretNumber(
+        widget.activeContact!.contactId,
+      );
+      if (lookedUp != null) {
+        peerId = lookedUp['deviceId'];
+        peerPub = lookedUp['publicKey'];
+      }
+    }
     _peerDeviceId = peerId;
 
     final sessionNotifier = ref.read(chatSessionProvider.notifier);
@@ -368,7 +383,7 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
     });
   }
 
-  void _sendMessage() {
+  Future<void> _sendMessage() async {
     final text = _textController.text;
     if (text.trim().isEmpty) return;
     _myTypingThrottleTimer?.cancel();
@@ -389,12 +404,49 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
         'timestamp': DateTime.now().millisecondsSinceEpoch,
       });
     }
-    ref.read(chatSessionProvider.notifier).sendMessage(
+    var sent = await ref.read(chatSessionProvider.notifier).sendMessage(
           text,
           contentType: ChatContentType.text,
           isFlashScreen: _sendNextTextAsFlash,
           burnAfterSeconds: _burnTimerSeconds,
         );
+    if (!sent && widget.activeContact != null && _myDeviceId != null && _myKeyPair != null) {
+      // Retry directory lookup in case partner just came online or registered!
+      final lookedUp = await RelayDirectoryService.lookupBySecretNumber(
+        widget.activeContact!.contactId,
+      );
+      if (lookedUp != null) {
+        _peerDeviceId = lookedUp['deviceId'];
+        ref.read(chatSessionProvider.notifier).initializeSession(
+              myDeviceId: _myDeviceId!,
+              peerDeviceId: lookedUp['deviceId']!,
+              peerPublicKeyBase64: lookedUp['publicKey']!,
+              myIdentityKeyPair: _myKeyPair!,
+            );
+        sent = await ref.read(chatSessionProvider.notifier).sendMessage(
+              text,
+              contentType: ChatContentType.text,
+              isFlashScreen: _sendNextTextAsFlash,
+              burnAfterSeconds: _burnTimerSeconds,
+            );
+      }
+    }
+    if (!sent) {
+      if (mounted) {
+        final s = S(ref.read(appLocaleProvider));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              s.tr(
+                'مخاطب هنوز کلید رمزنگاری خود را ثبت نکرده است. به محض اینکه یک بار وارد برنامه شود، کلیدش خودکار دریافت می‌شود!',
+                'Partner has not registered their E2EE key yet. Once they open the app once, messaging will work even offline!',
+              ),
+            ),
+          ),
+        );
+      }
+      return;
+    }
     _textController.clear();
     if (_sendNextTextAsFlash) {
       setState(() => _sendNextTextAsFlash = false);

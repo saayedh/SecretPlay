@@ -250,6 +250,17 @@ export const ADMIN_DASHBOARD_HTML = `<!DOCTYPE html>
           <strong>اتاق‌های شناسایی‌شده:</strong>
           <div id="roomsChips" style="display:flex; gap:6px; flex-wrap:wrap; margin-top:8px;"></div>
         </div>
+        <hr style="border-color:#1d2238; margin:16px 0;" />
+        <h2 style="margin-bottom:10px;">🚀 انتشار آپدیت جدید اپلیکیشن (In-App Auto-Updater)</h2>
+        <div style="display:grid; grid-template-columns:1fr 110px; gap:8px; margin-bottom:8px;">
+          <input type="text" id="updVersion" placeholder="نسخه جدید (مثلاً 1.3.0)" value="1.2.0" />
+          <input type="number" id="updBuild" placeholder="Build #" value="2" />
+        </div>
+        <input type="text" id="updUrl" placeholder="لینک مستقیم دانلود APK..." value="https://github.com/saayedh/SecretPlay/releases/download/v1.0.0/app-arm64-v8a-release.apk" style="width:100%; margin-bottom:8px;" />
+        <div style="display:flex; gap:8px;">
+          <input type="text" id="updNotes" placeholder="توضیحات آپدیت برای کاربران..." value="نسخه جدید SecretPlay با رفع باگ چت، تماس تصویری و قابلیت‌های جدید آماده است!" style="flex:1;" />
+          <button class="btn-pink" onclick="publishUpdate()">📢 اعلام آپدیت به همه</button>
+        </div>
       </div>
     </div>
 
@@ -443,6 +454,20 @@ export const ADMIN_DASHBOARD_HTML = `<!DOCTYPE html>
       await sendAdminCommand({ command: 'change_admin_key', newKey });
       document.getElementById('adminKeyInput').value = newKey;
       document.getElementById('newAdminKey').value = '';
+    }
+
+    async function publishUpdate() {
+      const latestVersion = document.getElementById('updVersion').value.trim();
+      const latestBuild = parseInt(document.getElementById('updBuild').value, 10) || 2;
+      const downloadUrl = document.getElementById('updUrl').value.trim();
+      const releaseNotes = document.getElementById('updNotes').value.trim();
+      await sendAdminCommand({
+        command: 'publish_update',
+        latestVersion,
+        latestBuild,
+        downloadUrl,
+        releaseNotes,
+      });
     }
 
     loadOverview();
