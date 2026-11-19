@@ -1,0 +1,20 @@
+{
+  "name": "secretplay-crypto-core",
+  "version": "1.0.0",
+  "description": "Shared cryptographic primitives, replay protection, and protocol definitions for SecretPlay",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/*.test.js"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^20.12.7",
+    "typescript": "^5.4.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
