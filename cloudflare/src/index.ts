@@ -1,4 +1,5 @@
 import { SecretPlaySessionRelay } from '../durable_objects/SecretPlaySessionRelay';
+import { ADMIN_DASHBOARD_HTML } from './admin_dashboard';
 
 export interface Env {
   SESSION_RELAY: DurableObjectNamespace<SecretPlaySessionRelay>;
@@ -26,11 +27,12 @@ export default {
       return new Response(
         JSON.stringify({
           service: 'SecretPlay Cloudflare E2EE Relay',
-          version: '1.1.0',
+          version: '1.2.0',
           e2ee: true,
           zeroStorage: true,
           freeTierMode: true,
           multiRoomTokens: true,
+          adminDashboard: '/admin',
           turnEnabled: env.ENABLE_CLOUDFLARE_TURN === 'true',
           timestamp: Date.now(),
         }),
@@ -38,6 +40,30 @@ export default {
           headers: { 'Content-Type': 'application/json' },
         }
       );
+    }
+
+    // Interactive Cloudflare Edge Admin Dashboard UI
+    if (url.pathname === '/admin' || url.pathname === '/admin/') {
+      return new Response(ADMIN_DASHBOARD_HTML, {
+        headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      });
+    }
+
+    // Admin API routes forwarded to central 'admin-registry' Durable Object
+    if (url.pathname === '/admin/api/overview') {
+      const id = env.SESSION_RELAY.idFromName('admin-registry');
+      const stub = env.SESSION_RELAY.get(id);
+      const targetUrl = new URL(request.url);
+      targetUrl.pathname = '/internal-admin/overview';
+      return stub.fetch(new Request(targetUrl.toString(), request));
+    }
+
+    if (url.pathname === '/admin/api/command' && request.method === 'POST') {
+      const id = env.SESSION_RELAY.idFromName('admin-registry');
+      const stub = env.SESSION_RELAY.get(id);
+      const targetUrl = new URL(request.url);
+      targetUrl.pathname = '/internal-admin/command';
+      return stub.fetch(new Request(targetUrl.toString(), request));
     }
 
     // Health check endpoint

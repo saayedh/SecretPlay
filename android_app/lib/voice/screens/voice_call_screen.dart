@@ -1,16 +1,28 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../webrtc_service.dart';
 import '../../chat/screens/private_chat_screen.dart';
+import '../../core/app_localizations.dart';
 import '../../networking/network_mode.dart';
 import '../../security/auto_lock_service.dart';
 
 class VoiceCallScreen extends ConsumerStatefulWidget {
   final bool isIncoming;
+  final bool isVideoCall;
+  final String? initialPeerDeviceId;
+  final String? peerDisplayName;
 
-  const VoiceCallScreen({super.key, this.isIncoming = false});
+  const VoiceCallScreen({
+    super.key,
+    this.isIncoming = false,
+    this.isVideoCall = false,
+    this.initialPeerDeviceId,
+    this.peerDisplayName,
+  });
 
   @override
   ConsumerState<VoiceCallScreen> createState() => _VoiceCallScreenState();
@@ -22,6 +34,8 @@ class _VoiceCallScreenState extends ConsumerState<VoiceCallScreen> {
   CallState _callState = CallState.connecting;
   int _durationSeconds = 0;
   bool _isMuted = false;
+  bool _isVideoCall = false;
+  bool _isCameraEnabled = true;
   AudioRoute _audioRoute = AudioRoute.earpiece;
 
   String _myId = 'me';
@@ -29,11 +43,19 @@ class _VoiceCallScreenState extends ConsumerState<VoiceCallScreen> {
 
   StreamSubscription? _stateSub;
   StreamSubscription? _durationSub;
+  StreamSubscription? _videoSub;
 
   @override
   void initState() {
     super.initState();
+    _isVideoCall = widget.isVideoCall;
+    _isCameraEnabled = widget.isVideoCall;
+    _audioRoute = widget.isVideoCall ? AudioRoute.speaker : AudioRoute.earpiece;
     _callState = widget.isIncoming ? CallState.incomingRinging : CallState.connecting;
+    if (widget.initialPeerDeviceId != null && widget.initialPeerDeviceId!.isNotEmpty) {
+      _peerId = widget.initialPeerDeviceId!;
+    }
+
     final wsClient = ref.read(wsClientProvider);
     final crypto = ref.read(cryptoServiceProvider);
     final autoLock = ref.read(autoLockProvider);
@@ -46,7 +68,11 @@ class _VoiceCallScreenState extends ConsumerState<VoiceCallScreen> {
 
     _stateSub = _voiceService.onCallStateChange.listen((state) {
       if (mounted) {
-        setState(() => _callState = state);
+        setState(() {
+          _callState = state;
+          _isVideoCall = _voiceService.isVideoCall;
+          _isCameraEnabled = _voiceService.isCameraEnabled;
+        });
         if (state == CallState.idle || state == CallState.ended) {
           Navigator.of(context).pop();
         }
@@ -59,6 +85,15 @@ class _VoiceCallScreenState extends ConsumerState<VoiceCallScreen> {
       }
     });
 
+    _videoSub = _voiceService.onVideoStreamUpdate.listen((_) {
+      if (mounted) {
+        setState(() {
+          _isVideoCall = _voiceService.isVideoCall;
+          _isCameraEnabled = _voiceService.isCameraEnabled;
+        });
+      }
+    });
+
     _initCallContext();
   }
 
@@ -66,8 +101,32 @@ class _VoiceCallScreenState extends ConsumerState<VoiceCallScreen> {
   void dispose() {
     _stateSub?.cancel();
     _durationSub?.cancel();
-    _voiceService.endCall(notifyPeer: true);
+    _videoSub?.cancel();
+    _voiceService.dispose();
     super.dispose();
+  }
+
+  Future<bool> _ensurePermissions() async {
+    if (kIsWeb) {
+      // On Web/Desktop Chrome, browser prompts automatically when getUserMedia is invoked
+      return true;
+    }
+    AutoLockService().setAuthenticatingBiometrics(true);
+    AutoLockService().setTransientOverlayActive(true);
+    try {
+      final micStatus = await Permission.microphone.request();
+      if (!micStatus.isGranted) return false;
+      if (_isVideoCall) {
+        final camStatus = await Permission.camera.request();
+        if (!camStatus.isGranted) return false;
+      }
+      return true;
+    } catch (_) {
+      return true;
+    } finally {
+      AutoLockService().setAuthenticatingBiometrics(false);
+      AutoLockService().setTransientOverlayActive(false);
+    }
   }
 
   Future<void> _initCallContext() async {
@@ -75,15 +134,15 @@ class _VoiceCallScreenState extends ConsumerState<VoiceCallScreen> {
     final crypto = ref.read(cryptoServiceProvider);
     final netConfig = ref.read(networkConfigProvider);
 
-    // Temporarily guard AutoLock while OS permission dialog is shown
-    AutoLockService().setAuthenticatingBiometrics(true);
-    final status = await Permission.microphone.request();
-    AutoLockService().setAuthenticatingBiometrics(false);
+    await _voiceService.ensureRenderersInitialized();
 
-    if (!status.isGranted) {
+    final hasPerm = await _ensurePermissions();
+    if (!hasPerm) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Microphone permission required for voice calls.')),
+          const SnackBar(
+            content: Text('نیاز به دسترسی میکروفون/دوربین برای برقراری تماس است.'),
+          ),
         );
         Navigator.of(context).pop();
       }
@@ -91,7 +150,13 @@ class _VoiceCallScreenState extends ConsumerState<VoiceCallScreen> {
     }
 
     _myId = await keystore.getOrCreateDeviceId();
-    _peerId = await keystore.getPeerDeviceId() ?? 'peer';
+    final savedPeer = await keystore.getPeerDeviceId();
+    if (widget.initialPeerDeviceId != null && widget.initialPeerDeviceId!.isNotEmpty) {
+      _peerId = widget.initialPeerDeviceId!;
+    } else if (savedPeer != null && savedPeer.isNotEmpty) {
+      _peerId = savedPeer;
+    }
+
     final myPriv = await keystore.getIdentityPrivateKey();
     final peerPub = await keystore.getPeerPublicKey();
     final keyPair = myPriv != null ? await crypto.reconstructIdentityKeyPair(myPriv) : null;
@@ -102,6 +167,7 @@ class _VoiceCallScreenState extends ConsumerState<VoiceCallScreen> {
       networkMode: netConfig.mode,
       myIdentityKeyPair: keyPair,
       peerPublicKeyBase64: peerPub,
+      isVideoCall: _isVideoCall,
     );
 
     if (!widget.isIncoming) {
@@ -109,6 +175,7 @@ class _VoiceCallScreenState extends ConsumerState<VoiceCallScreen> {
         peerDeviceId: _peerId,
         myDeviceId: _myId,
         networkMode: netConfig.mode,
+        video: _isVideoCall,
       );
     }
   }
@@ -159,187 +226,319 @@ class _VoiceCallScreenState extends ConsumerState<VoiceCallScreen> {
     return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
   }
 
-  String _getCallStatusText() {
+  String _getCallStatusText(S s) {
     switch (_callState) {
       case CallState.outgoingRinging:
-        return 'CALLING PEER...';
+        return s.tr('در حال زنگ خوردن...', 'RINGING PARTNER...');
       case CallState.incomingRinging:
-        return 'INCOMING ENCRYPTED CALL';
+        return _isVideoCall
+            ? s.tr('تماس تصویری رمزنگاری‌شده ورودی...', 'INCOMING ENCRYPTED VIDEO CALL')
+            : s.tr('تماس صوتی رمزنگاری‌شده ورودی...', 'INCOMING ENCRYPTED VOICE CALL');
       case CallState.connecting:
-        return 'ESTABLISHING P2P DTLS-SRTP...';
+        return s.tr('در حال برقراری تونل مستقیم P2P...', 'ESTABLISHING P2P DTLS-SRTP...');
       case CallState.reconnecting:
-        return 'RECONNECTING ICE...';
+        return s.tr('در حال بازیابی اتصال...', 'RECONNECTING ICE...');
       case CallState.connected:
         return _formatDuration(_durationSeconds);
       case CallState.ended:
-        return 'CALL ENDED';
+        return s.tr('تماس پایان یافت', 'CALL ENDED');
       case CallState.idle:
-        return 'IDLE';
+        return s.tr('آماده', 'IDLE');
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF0A0A0C),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 40.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              // Header
-              Column(
-                children: [
-                  const Icon(Icons.lock_rounded, color: Color(0xFF64D2FF), size: 32),
-                  const SizedBox(height: 12),
-                  const Text(
-                    'END-TO-END ENCRYPTED VOICE',
-                    style: TextStyle(
-                      color: Colors.white70,
-                      fontSize: 12,
-                      letterSpacing: 1.5,
-                      fontWeight: FontWeight.bold,
+    final lang = ref.watch(appLocaleProvider);
+    final s = S(lang);
+    final hasRemoteVideo = _isVideoCall && _voiceService.remoteRenderer.srcObject != null;
+    final hasLocalVideo = _isVideoCall && _voiceService.localRenderer.srcObject != null;
+
+    return Directionality(
+      textDirection: s.dir,
+      child: Scaffold(
+        backgroundColor: const Color(0xFF0A0A0E),
+        body: Stack(
+          fit: StackFit.expand,
+          children: [
+            // Full-Screen Remote Video View (when in Video Call mode)
+            if (hasRemoteVideo)
+              Positioned.fill(
+                child: RTCVideoView(
+                  _voiceService.remoteRenderer,
+                  objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+                ),
+              ),
+
+            // Top & Bottom Gradient Scrims for legibility over video
+            if (hasRemoteVideo)
+              Positioned.fill(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.black.withOpacity(0.65),
+                        Colors.transparent,
+                        Colors.black.withOpacity(0.75),
+                      ],
                     ),
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    _getCallStatusText(),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 24,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 1.2,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                ),
+              ),
+
+            // Floating Local Camera Picture-in-Picture (PiP) Preview
+            if (hasLocalVideo && _isCameraEnabled)
+              Positioned(
+                top: 110,
+                right: 20,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: Container(
+                    width: 115,
+                    height: 165,
                     decoration: BoxDecoration(
-                      color: const Color(0xFF1C1C1E),
-                      borderRadius: BorderRadius.circular(12),
+                      color: Colors.black,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: const Color(0xFF00FFA3), width: 1.8),
                     ),
-                    child: const Text(
-                      'Direct P2P DTLS-SRTP Media • Zero Server Interception',
-                      style: TextStyle(color: Color(0xFF00FFA3), fontSize: 10),
+                    child: RTCVideoView(
+                      _voiceService.localRenderer,
+                      mirror: true,
+                      objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
                     ),
                   ),
-                ],
+                ),
               ),
 
-              // Animated Soundwave Visualizer / Avatar
-              Container(
-                width: 140,
-                height: 140,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: const Color(0xFF1C1C1E),
-                  border: Border.all(
-                    color: _callState == CallState.connected
-                        ? const Color(0xFF00FFA3)
-                        : const Color(0xFF64D2FF),
-                    width: 2,
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: (_callState == CallState.connected
-                              ? const Color(0xFF00FFA3)
-                              : const Color(0xFF64D2FF))
-                          .withOpacity(0.25),
-                      blurRadius: 24,
-                      spreadRadius: 4,
+            // Foreground HUD & Controls
+            SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 30.0),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    // Header
+                    Column(
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              _isVideoCall ? Icons.videocam_rounded : Icons.lock_rounded,
+                              color: const Color(0xFF00FFA3),
+                              size: 24,
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              _isVideoCall
+                                  ? s.tr('تماس تصویری مستقیم E2EE', 'END-TO-END ENCRYPTED VIDEO')
+                                  : s.tr('تماس صوتی مستقیم E2EE', 'END-TO-END ENCRYPTED VOICE'),
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 12,
+                                letterSpacing: 1.2,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (widget.peerDisplayName != null) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            widget.peerDisplayName!,
+                            style: const TextStyle(
+                              color: Color(0xFF64D2FF),
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 8),
+                        Text(
+                          _getCallStatusText(s),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 22,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1C1C1E).withOpacity(0.8),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            s.tr(
+                              'ارتباط مستقیم P2P DTLS-SRTP • بدون ضبط یا ذخیره روی سرور',
+                              'Direct P2P DTLS-SRTP Media • Zero Server Interception',
+                            ),
+                            style: const TextStyle(color: Color(0xFF00FFA3), fontSize: 10),
+                          ),
+                        ),
+                      ],
                     ),
+
+                    // Center Avatar (shown when audio-only or waiting for remote video)
+                    if (!hasRemoteVideo)
+                      Container(
+                        width: 140,
+                        height: 140,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: const Color(0xFF1C1C24),
+                          border: Border.all(
+                            color: _callState == CallState.connected
+                                ? const Color(0xFF00FFA3)
+                                : const Color(0xFF64D2FF),
+                            width: 2.2,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: (_callState == CallState.connected
+                                      ? const Color(0xFF00FFA3)
+                                      : const Color(0xFF64D2FF))
+                                  .withOpacity(0.28),
+                              blurRadius: 28,
+                              spreadRadius: 4,
+                            ),
+                          ],
+                        ),
+                        child: Icon(
+                          _isVideoCall ? Icons.videocam_rounded : Icons.person_rounded,
+                          color: Colors.white54,
+                          size: 68,
+                        ),
+                      )
+                    else
+                      const SizedBox(height: 80),
+
+                    // Controls Bar (Incoming Ringing vs Active/Outgoing Call)
+                    if (_callState == CallState.incomingRinging)
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          IconButton(
+                            iconSize: 36,
+                            icon: const Icon(Icons.call_end_rounded, color: Colors.white),
+                            tooltip: s.tr('رد تماس', 'Reject Call'),
+                            style: IconButton.styleFrom(
+                              backgroundColor: const Color(0xFFFF3B30),
+                              padding: const EdgeInsets.all(20),
+                            ),
+                            onPressed: _rejectIncomingCall,
+                          ),
+                          IconButton(
+                            iconSize: 36,
+                            icon: Icon(
+                              _isVideoCall ? Icons.videocam_rounded : Icons.call_rounded,
+                              color: Colors.black,
+                            ),
+                            tooltip: s.tr('پاسخ به تماس', 'Accept Call'),
+                            style: IconButton.styleFrom(
+                              backgroundColor: const Color(0xFF00FFA3),
+                              padding: const EdgeInsets.all(20),
+                            ),
+                            onPressed: _acceptIncomingCall,
+                          ),
+                        ],
+                      )
+                    else
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          // Mute Microphone Button
+                          IconButton(
+                            iconSize: 28,
+                            icon: Icon(
+                              _isMuted ? Icons.mic_off_rounded : Icons.mic_rounded,
+                              color: _isMuted ? const Color(0xFFFF453A) : Colors.white,
+                            ),
+                            tooltip: s.tr('قطع/وصل میکروفون', 'Mute/Unmute'),
+                            style: IconButton.styleFrom(
+                              backgroundColor: const Color(0xFF1C1C22).withOpacity(0.85),
+                              padding: const EdgeInsets.all(14),
+                            ),
+                            onPressed: () {
+                              _voiceService.toggleMute();
+                              setState(() => _isMuted = _voiceService.isMuted);
+                            },
+                          ),
+
+                          if (_isVideoCall) ...[
+                            // Toggle Camera On/Off
+                            IconButton(
+                              iconSize: 28,
+                              icon: Icon(
+                                _isCameraEnabled
+                                    ? Icons.videocam_rounded
+                                    : Icons.videocam_off_rounded,
+                                color: _isCameraEnabled ? Colors.white : const Color(0xFFFF453A),
+                              ),
+                              tooltip: s.tr('روشن/خاموش کردن دوربین', 'Toggle Camera'),
+                              style: IconButton.styleFrom(
+                                backgroundColor: const Color(0xFF1C1C22).withOpacity(0.85),
+                                padding: const EdgeInsets.all(14),
+                              ),
+                              onPressed: () {
+                                _voiceService.toggleCamera();
+                                setState(() => _isCameraEnabled = _voiceService.isCameraEnabled);
+                              },
+                            ),
+                            // Switch Front/Back Camera
+                            IconButton(
+                              iconSize: 28,
+                              icon: const Icon(Icons.flip_camera_ios_rounded, color: Colors.white),
+                              tooltip: s.tr('چرخش دوربین جلو/عقب', 'Flip Camera'),
+                              style: IconButton.styleFrom(
+                                backgroundColor: const Color(0xFF1C1C22).withOpacity(0.85),
+                                padding: const EdgeInsets.all(14),
+                              ),
+                              onPressed: () => _voiceService.switchCamera(),
+                            ),
+                          ],
+
+                          // End Call Button
+                          IconButton(
+                            iconSize: 34,
+                            icon: const Icon(Icons.call_end_rounded, color: Colors.white),
+                            tooltip: s.tr('پایان تماس', 'End Call'),
+                            style: IconButton.styleFrom(
+                              backgroundColor: const Color(0xFFFF3B30),
+                              padding: const EdgeInsets.all(18),
+                            ),
+                            onPressed: () {
+                              _voiceService.endCall(notifyPeer: true);
+                              Navigator.of(context).pop();
+                            },
+                          ),
+
+                          // Audio Route (Earpiece / Speaker / Bluetooth) Button
+                          IconButton(
+                            iconSize: 28,
+                            icon: Icon(
+                              _getAudioRouteIcon(),
+                              color: _audioRoute != AudioRoute.earpiece
+                                  ? const Color(0xFF64D2FF)
+                                  : Colors.white,
+                            ),
+                            tooltip: s.tr('خروجی صدا', 'Audio Route'),
+                            style: IconButton.styleFrom(
+                              backgroundColor: const Color(0xFF1C1C22).withOpacity(0.85),
+                              padding: const EdgeInsets.all(14),
+                            ),
+                            onPressed: _cycleAudioRoute,
+                          ),
+                        ],
+                      ),
                   ],
                 ),
-                child: const Icon(Icons.person, color: Colors.white54, size: 72),
               ),
-
-              // Controls Bar (Incoming Ringing vs Active/Outgoing Call)
-              if (_callState == CallState.incomingRinging)
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    // Reject Call Button
-                    IconButton(
-                      iconSize: 36,
-                      icon: const Icon(Icons.call_end_rounded, color: Colors.white),
-                      tooltip: 'Reject Call',
-                      style: IconButton.styleFrom(
-                        backgroundColor: const Color(0xFFFF3B30),
-                        padding: const EdgeInsets.all(20),
-                      ),
-                      onPressed: _rejectIncomingCall,
-                    ),
-                    // Accept Call Button
-                    IconButton(
-                      iconSize: 36,
-                      icon: const Icon(Icons.call_rounded, color: Colors.black),
-                      tooltip: 'Accept Encrypted Call',
-                      style: IconButton.styleFrom(
-                        backgroundColor: const Color(0xFF00FFA3),
-                        padding: const EdgeInsets.all(20),
-                      ),
-                      onPressed: _acceptIncomingCall,
-                    ),
-                  ],
-                )
-              else
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    // Mute Button
-                    IconButton(
-                      iconSize: 32,
-                      icon: Icon(
-                        _isMuted ? Icons.mic_off_rounded : Icons.mic_rounded,
-                        color: _isMuted ? const Color(0xFFFF453A) : Colors.white,
-                      ),
-                      tooltip: _isMuted ? 'Unmute Microphone' : 'Mute Microphone',
-                      style: IconButton.styleFrom(
-                        backgroundColor: const Color(0xFF1C1C1E),
-                        padding: const EdgeInsets.all(16),
-                      ),
-                      onPressed: () {
-                        _voiceService.toggleMute();
-                        setState(() => _isMuted = _voiceService.isMuted);
-                      },
-                    ),
-
-                    // End Call Button
-                    IconButton(
-                      iconSize: 36,
-                      icon: const Icon(Icons.call_end_rounded, color: Colors.white),
-                      tooltip: 'End Call',
-                      style: IconButton.styleFrom(
-                        backgroundColor: const Color(0xFFFF3B30),
-                        padding: const EdgeInsets.all(20),
-                      ),
-                      onPressed: () {
-                        _voiceService.endCall(notifyPeer: true);
-                        Navigator.of(context).pop();
-                      },
-                    ),
-
-                    // Audio Route (Earpiece / Speaker / Bluetooth) Button
-                    IconButton(
-                      iconSize: 32,
-                      icon: Icon(
-                        _getAudioRouteIcon(),
-                        color: _audioRoute != AudioRoute.earpiece
-                            ? const Color(0xFF64D2FF)
-                            : Colors.white,
-                      ),
-                      tooltip: 'Audio Route: ${_audioRoute.name.toUpperCase()}',
-                      style: IconButton.styleFrom(
-                        backgroundColor: const Color(0xFF1C1C1E),
-                        padding: const EdgeInsets.all(16),
-                      ),
-                      onPressed: _cycleAudioRoute,
-                    ),
-                  ],
-                ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

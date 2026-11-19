@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import '../../security/auto_lock_service.dart';
 
 class QrScannerScreen extends StatefulWidget {
   const QrScannerScreen({super.key});
@@ -13,7 +14,14 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
   bool _hasScanned = false;
 
   @override
+  void initState() {
+    super.initState();
+    AutoLockService().setTransientOverlayActive(true);
+  }
+
+  @override
   void dispose() {
+    AutoLockService().setTransientOverlayActive(false);
     _controller.dispose();
     super.dispose();
   }

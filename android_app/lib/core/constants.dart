@@ -33,4 +33,9 @@ class AppConstants {
   static const String keyCustomCloudUrl = 'sp_custom_cloud_url';
   static const String keyCustomLocalUrl = 'sp_custom_local_url';
   static const String keyBiometricsEnabled = 'sp_biometrics_enabled';
+  static const String keyLanguageCode = 'sp_language_code';
+  static const String keyContactsList = 'sp_contacts_list';
+  static const String keyMySecretNumber = 'sp_my_secret_number';
+  static const String keyDuressPinHash = 'sp_duress_pin_hash';
+  static const String keyShakeToLockEnabled = 'sp_shake_to_lock';
 }

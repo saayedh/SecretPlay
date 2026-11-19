@@ -27,7 +27,9 @@ export type SignalPayloadType =
   | 'call_end'
   | 'offer'
   | 'answer'
-  | 'ice_candidate';
+  | 'ice_candidate'
+  | 'typing_start'
+  | 'typing_stop';
 
 export interface BaseProtocolMessage {
   type: ProtocolMessageType;
@@ -82,7 +84,7 @@ export interface EncryptedChatMessage extends BaseProtocolMessage {
 export interface MessageAck extends BaseProtocolMessage {
   type: 'msg_ack';
   msgId: string;
-  status: 'relayed' | 'delivered' | 'dropped_peer_offline';
+  status: 'relayed' | 'delivered' | 'queued_offline' | 'dropped_peer_offline';
 }
 
 export interface SignalingMessage extends BaseProtocolMessage {

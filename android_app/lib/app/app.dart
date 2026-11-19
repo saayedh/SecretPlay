@@ -34,7 +34,8 @@ class _SecretPlayAppState extends ConsumerState<SecretPlayApp> with WidgetsBindi
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    final shouldObscure = state != AppLifecycleState.resumed;
+    final shouldObscure = AutoLockService().strictBackgroundAutoLock &&
+        (state == AppLifecycleState.paused || state == AppLifecycleState.hidden);
     if (_obscureScreen != shouldObscure && mounted) {
       setState(() => _obscureScreen = shouldObscure);
     }

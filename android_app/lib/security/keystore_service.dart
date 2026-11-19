@@ -3,6 +3,7 @@ import 'package:uuid/uuid.dart';
 import '../core/constants.dart';
 
 class KeystoreService {
+  static final Map<String, String> _fallbackMemoryStore = {};
   final FlutterSecureStorage _storage;
 
   KeystoreService({FlutterSecureStorage? storage})
@@ -14,13 +15,38 @@ class KeystoreService {
               ),
             );
 
+  Future<String?> _read(String key) async {
+    try {
+      final val = await _storage.read(key: key);
+      return val ?? _fallbackMemoryStore[key];
+    } catch (_) {
+      return _fallbackMemoryStore[key];
+    }
+  }
+
+  Future<void> _write(String key, String value) async {
+    _fallbackMemoryStore[key] = value;
+    try {
+      await _storage.write(key: key, value: value);
+    } catch (_) {
+      // Fallback to in-memory storage on desktop/web simulator
+    }
+  }
+
+  Future<void> _delete(String key) async {
+    _fallbackMemoryStore.remove(key);
+    try {
+      await _storage.delete(key: key);
+    } catch (_) {}
+  }
+
   Future<String> getOrCreateDeviceId() async {
-    final existing = await _storage.read(key: AppConstants.keyDeviceId);
+    final existing = await _read(AppConstants.keyDeviceId);
     if (existing != null && existing.isNotEmpty) {
       return existing;
     }
     final id = 'dev-${const Uuid().v4()}';
-    await _storage.write(key: AppConstants.keyDeviceId, value: id);
+    await _write(AppConstants.keyDeviceId, id);
     return id;
   }
 
@@ -28,40 +54,40 @@ class KeystoreService {
     required String privateKeyBase64,
     required String publicKeyBase64,
   }) async {
-    await _storage.write(key: AppConstants.keyIdentityPrivateKey, value: privateKeyBase64);
-    await _storage.write(key: AppConstants.keyIdentityPublicKey, value: publicKeyBase64);
+    await _write(AppConstants.keyIdentityPrivateKey, privateKeyBase64);
+    await _write(AppConstants.keyIdentityPublicKey, publicKeyBase64);
   }
 
   Future<String?> getIdentityPrivateKey() async {
-    return await _storage.read(key: AppConstants.keyIdentityPrivateKey);
+    return await _read(AppConstants.keyIdentityPrivateKey);
   }
 
   Future<String?> getIdentityPublicKey() async {
-    return await _storage.read(key: AppConstants.keyIdentityPublicKey);
+    return await _read(AppConstants.keyIdentityPublicKey);
   }
 
   Future<void> savePairedPeer({
     required String peerDeviceId,
     required String peerPublicKeyBase64,
   }) async {
-    await _storage.write(key: AppConstants.keyPeerDeviceId, value: peerDeviceId);
-    await _storage.write(key: AppConstants.keyPeerPublicKey, value: peerPublicKeyBase64);
+    await _write(AppConstants.keyPeerDeviceId, peerDeviceId);
+    await _write(AppConstants.keyPeerPublicKey, peerPublicKeyBase64);
   }
 
   Future<String?> getPeerDeviceId() async {
-    return await _storage.read(key: AppConstants.keyPeerDeviceId);
+    return await _read(AppConstants.keyPeerDeviceId);
   }
 
   Future<String?> getPeerPublicKey() async {
-    return await _storage.read(key: AppConstants.keyPeerPublicKey);
+    return await _read(AppConstants.keyPeerPublicKey);
   }
 
   Future<void> savePairToken(String token) async {
-    await _storage.write(key: AppConstants.keyPairToken, value: token.trim().toUpperCase());
+    await _write(AppConstants.keyPairToken, token.trim().toUpperCase());
   }
 
   Future<String?> getPairToken() async {
-    return await _storage.read(key: AppConstants.keyPairToken);
+    return await _read(AppConstants.keyPairToken);
   }
 
   Future<bool> hasPairTokenOrPeer() async {
@@ -76,11 +102,11 @@ class KeystoreService {
   }
 
   Future<void> savePassphraseHash(String hash) async {
-    await _storage.write(key: AppConstants.keyAppPassphraseHash, value: hash);
+    await _write(AppConstants.keyAppPassphraseHash, hash);
   }
 
   Future<String?> getPassphraseHash() async {
-    return await _storage.read(key: AppConstants.keyAppPassphraseHash);
+    return await _read(AppConstants.keyAppPassphraseHash);
   }
 
   Future<bool> isPassphraseConfigured() async {
@@ -89,36 +115,71 @@ class KeystoreService {
   }
 
   Future<void> saveNetworkMode(String modeName) async {
-    await _storage.write(key: AppConstants.keyNetworkMode, value: modeName);
+    await _write(AppConstants.keyNetworkMode, modeName);
   }
 
   Future<String?> getNetworkMode() async {
-    return await _storage.read(key: AppConstants.keyNetworkMode);
+    return await _read(AppConstants.keyNetworkMode);
   }
 
   Future<void> saveCustomCloudUrl(String url) async {
-    await _storage.write(key: AppConstants.keyCustomCloudUrl, value: url);
+    await _write(AppConstants.keyCustomCloudUrl, url);
   }
 
   Future<String?> getCustomCloudUrl() async {
-    return await _storage.read(key: AppConstants.keyCustomCloudUrl);
+    return await _read(AppConstants.keyCustomCloudUrl);
   }
 
   Future<void> saveCustomLocalUrl(String url) async {
-    await _storage.write(key: AppConstants.keyCustomLocalUrl, value: url);
+    await _write(AppConstants.keyCustomLocalUrl, url);
   }
 
   Future<String?> getCustomLocalUrl() async {
-    return await _storage.read(key: AppConstants.keyCustomLocalUrl);
+    return await _read(AppConstants.keyCustomLocalUrl);
+  }
+
+  Future<void> saveLanguageCode(String code) async {
+    await _write(AppConstants.keyLanguageCode, code);
+  }
+
+  Future<String?> getLanguageCode() async {
+    return await _read(AppConstants.keyLanguageCode);
+  }
+
+  Future<void> saveMySecretNumber(String secretNumber) async {
+    await _write(AppConstants.keyMySecretNumber, secretNumber.trim().toUpperCase());
+  }
+
+  Future<String?> getMySecretNumber() async {
+    return await _read(AppConstants.keyMySecretNumber);
+  }
+
+  Future<void> saveContactsJson(String jsonList) async {
+    await _write(AppConstants.keyContactsList, jsonList);
+  }
+
+  Future<String?> getContactsJson() async {
+    return await _read(AppConstants.keyContactsList);
+  }
+
+  Future<void> saveDuressPinHash(String hash) async {
+    await _write(AppConstants.keyDuressPinHash, hash);
+  }
+
+  Future<String?> getDuressPinHash() async {
+    return await _read(AppConstants.keyDuressPinHash);
   }
 
   Future<void> revokePairing() async {
-    await _storage.delete(key: AppConstants.keyPeerDeviceId);
-    await _storage.delete(key: AppConstants.keyPeerPublicKey);
-    await _storage.delete(key: AppConstants.keyPairToken);
+    await _delete(AppConstants.keyPeerDeviceId);
+    await _delete(AppConstants.keyPeerPublicKey);
+    await _delete(AppConstants.keyPairToken);
   }
 
   Future<void> fullWipe() async {
-    await _storage.deleteAll();
+    _fallbackMemoryStore.clear();
+    try {
+      await _storage.deleteAll();
+    } catch (_) {}
   }
 }

@@ -1,29 +1,249 @@
 package com.secretplay.app
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.media.MediaPlayer
+import android.media.MediaRecorder
+import android.media.PlaybackParams
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.util.Base64
 import android.view.WindowManager
+import androidx.core.app.NotificationCompat
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.io.File
+import kotlin.math.sqrt
 
-class MainActivity : FlutterFragmentActivity() {
+class MainActivity : FlutterFragmentActivity(), SensorEventListener {
     private val SECURITY_CHANNEL = "com.secretplay.app/security"
+    private val FLASH_CHANNEL_ID = "secretplay_live_flash_channel"
     private var securityMethodChannel: MethodChannel? = null
     private var audioFocusRequest: AudioFocusRequest? = null
 
+    // Accelerometer Shake-to-Lock
+    private var sensorManager: SensorManager? = null
+    private var accelerometer: Sensor? = null
+    private var lastShakeTimeMs: Long = 0
+
+    // Ephemeral Voice Note Recorder
+    private var voiceRecorder: MediaRecorder? = null
+    private var tempVoiceFile: File? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Default to FLAG_SECURE to prevent screenshots, screen recorders, and task snapshot leak
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        } else {
+            @Suppress("DEPRECATION")
+            window.addFlags(
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                        WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+            )
+        }
         window.setFlags(
             WindowManager.LayoutParams.FLAG_SECURE,
             WindowManager.LayoutParams.FLAG_SECURE
         )
+        createFlashNotificationChannel()
+
+        sensorManager = getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+        accelerometer = sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        accelerometer?.let {
+            sensorManager?.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        sensorManager?.unregisterListener(this)
+    }
+
+    override fun onSensorChanged(event: SensorEvent?) {
+        if (event?.sensor?.type != Sensor.TYPE_ACCELEROMETER) return
+        val x = event.values[0]
+        val y = event.values[1]
+        val z = event.values[2]
+        val gX = x / SensorManager.GRAVITY_EARTH
+        val gY = y / SensorManager.GRAVITY_EARTH
+        val gZ = z / SensorManager.GRAVITY_EARTH
+        val gForce = sqrt((gX * gX + gY * gY + gZ * gZ).toDouble()).toFloat()
+
+        if (gForce > 2.65f) {
+            val now = System.currentTimeMillis()
+            if (now - lastShakeTimeMs > 1200) {
+                lastShakeTimeMs = now
+                securityMethodChannel?.invokeMethod("onShakeDetected", null)
+            }
+        }
+    }
+
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+
+    private fun startVoiceNoteRecording(): Boolean {
+        return try {
+            stopVoiceNoteRecording()
+            val file = File(cacheDir, "sp_ephemeral_voice.m4a")
+            if (file.exists()) file.delete()
+            tempVoiceFile = file
+
+            val recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                MediaRecorder(this)
+            } else {
+                @Suppress("DEPRECATION")
+                MediaRecorder()
+            }
+            recorder.setAudioSource(MediaRecorder.AudioSource.MIC)
+            recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            recorder.setAudioSamplingRate(16000)
+            recorder.setAudioEncodingBitRate(24000)
+            recorder.setOutputFile(file.absolutePath)
+            recorder.prepare()
+            recorder.start()
+            voiceRecorder = recorder
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun stopVoiceNoteRecording(): String? {
+        return try {
+            voiceRecorder?.apply {
+                try {
+                    stop()
+                } catch (_: Exception) {}
+                release()
+            }
+            voiceRecorder = null
+            val file = tempVoiceFile
+            tempVoiceFile = null
+            if (file != null && file.exists()) {
+                val bytes = file.readBytes()
+                // Overwrite and delete temporary file immediately after reading into RAM
+                file.writeBytes(ByteArray(bytes.size))
+                file.delete()
+                Base64.encodeToString(bytes, Base64.NO_WRAP)
+            } else {
+                null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun playVoiceNote(audioBase64: String, cyberPitch: Boolean) {
+        try {
+            val bytes = Base64.decode(audioBase64, Base64.DEFAULT)
+            val playFile = File(cacheDir, "sp_play_temp.m4a")
+            playFile.writeBytes(bytes)
+
+            val player = MediaPlayer()
+            player.setDataSource(playFile.absolutePath)
+            player.prepare()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && cyberPitch) {
+                try {
+                    val params = PlaybackParams()
+                    params.pitch = 0.80f // Anonymous deep cyber voice pitch
+                    params.speed = 1.02f
+                    player.playbackParams = params
+                } catch (_: Exception) {}
+            }
+            player.setOnCompletionListener { mp ->
+                mp.release()
+                if (playFile.exists()) {
+                    playFile.writeBytes(ByteArray(16))
+                    playFile.delete()
+                }
+            }
+            player.start()
+        } catch (_: Exception) {}
+    }
+
+    private fun createFlashNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                FLASH_CHANNEL_ID,
+                "SecretPlay Live Flash Hologram",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Wakes lock screen when partner sends a live sketch or flash note"
+                enableVibration(true)
+                lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
+            }
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.createNotificationChannel(channel)
+        }
+    }
+
+    private fun wakeScreenAndShowFlashAlert(title: String, subtitle: String) {
+        try {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            @Suppress("DEPRECATION")
+            val wakeLock = pm.newWakeLock(
+                PowerManager.FULL_WAKE_LOCK or
+                        PowerManager.ACQUIRE_CAUSES_WAKEUP or
+                        PowerManager.ON_AFTER_RELEASE,
+                "secretplay:flash_wakeup"
+            )
+            wakeLock.acquire(5000L)
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                setShowWhenLocked(true)
+                setTurnScreenOn(true)
+            }
+
+            val fullScreenIntent = Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            val pendingFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            } else {
+                PendingIntent.FLAG_UPDATE_CURRENT
+            }
+            val fullScreenPendingIntent = PendingIntent.getActivity(
+                this,
+                3001,
+                fullScreenIntent,
+                pendingFlags
+            )
+
+            val notification = NotificationCompat.Builder(this, FLASH_CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentTitle(title)
+                .setContentText(subtitle)
+                .setPriority(NotificationCompat.PRIORITY_MAX)
+                .setCategory(NotificationCompat.CATEGORY_CALL)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setAutoCancel(true)
+                .setFullScreenIntent(fullScreenPendingIntent, true)
+                .build()
+
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.notify(3001, notification)
+
+            startActivity(fullScreenIntent)
+        } catch (_: Exception) {}
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -45,6 +265,32 @@ class MainActivity : FlutterFragmentActivity() {
                 }
                 "minimizeApp" -> {
                     moveTaskToBack(true)
+                    result.success(true)
+                }
+                "wakeAndShowFlashAlert" -> {
+                    val title = call.argument<String>("title") ?: "⚡ SecretPlay Live Flash"
+                    val subtitle = call.argument<String>("subtitle") ?: "New Hologram Flash!"
+                    wakeScreenAndShowFlashAlert(title, subtitle)
+                    result.success(true)
+                }
+                "startVoiceNoteRecording" -> {
+                    result.success(startVoiceNoteRecording())
+                }
+                "stopVoiceNoteRecording" -> {
+                    result.success(stopVoiceNoteRecording())
+                }
+                "playVoiceNote" -> {
+                    val b64 = call.argument<String>("audioBase64") ?: ""
+                    val pitch = call.argument<Boolean>("cyberPitch") ?: false
+                    if (b64.isNotEmpty()) {
+                        playVoiceNote(b64, pitch)
+                    }
+                    result.success(true)
+                }
+                "startStandbyService" -> {
+                    result.success(true)
+                }
+                "stopStandbyService" -> {
                     result.success(true)
                 }
                 "startVoiceCallService" -> {
@@ -126,12 +372,6 @@ class MainActivity : FlutterFragmentActivity() {
                 audioManager.isSpeakerphoneOn = false
             }
         }
-    }
-
-    override fun onUserLeaveHint() {
-        super.onUserLeaveHint()
-        // Hardware Home or Recents gesture detected: immediately alert Flutter engine
-        securityMethodChannel?.invokeMethod("onAppBackgrounded", null)
     }
 
     override fun onStop() {

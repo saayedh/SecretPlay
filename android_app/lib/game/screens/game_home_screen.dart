@@ -82,7 +82,11 @@ class _GameHomeScreenState extends ConsumerState<GameHomeScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('CYBER CIRCUIT'),
+        title: GestureDetector(
+          onTap: _onTrophyTapped,
+          onLongPress: _openPrivateGateway,
+          child: const Text('CYBER CIRCUIT'),
+        ),
         actions: [
           // Secret trigger disguised as Trophy Icon
           GestureDetector(

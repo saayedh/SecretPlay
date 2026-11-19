@@ -87,6 +87,9 @@ class SecretPlayWebSocketClient {
         },
       );
 
+      // Wait for the WebSocket handshake to complete (critical on Flutter Web / Chrome where WebSocket stays in CONNECTING state until open)
+      await _channel!.ready;
+
       _setStatus(ConnectionStatus.connected);
 
       // Authenticate with server using unique nonce & Ed25519 signature

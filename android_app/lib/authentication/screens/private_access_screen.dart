@@ -22,9 +22,21 @@ class _PrivateAccessScreenState extends State<PrivateAccessScreen> {
   }
 
   Future<void> _checkAuthMethods() async {
-    final hasPassphrase = await _keystore.isPassphraseConfigured();
-    final canCheckBiometrics = await _localAuth.canCheckBiometrics;
-    final isDeviceSupported = await _localAuth.isDeviceSupported();
+    bool hasPassphrase = false;
+    bool canCheckBiometrics = false;
+    bool isDeviceSupported = false;
+
+    try {
+      hasPassphrase = await _keystore.isPassphraseConfigured();
+    } catch (_) {}
+
+    try {
+      canCheckBiometrics = await _localAuth.canCheckBiometrics;
+      isDeviceSupported = await _localAuth.isDeviceSupported();
+    } catch (_) {
+      canCheckBiometrics = false;
+      isDeviceSupported = false;
+    }
 
     if (!mounted) return;
 

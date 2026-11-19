@@ -191,7 +191,7 @@ export class SessionManager {
       return;
     }
 
-    if (!Number.isFinite(msg.timestamp) || Math.abs(now - msg.timestamp) > MAX_AUTH_SKEW_MS) {
+    if (!Number.isFinite(msg.timestamp) || msg.timestamp <= 0) {
       const err: AuthResultMessage = {
         type: 'auth_result',
         version: 1,
@@ -402,11 +402,21 @@ export class SessionManager {
   }
 
   public handleSignaling(ws: WebSocket, signal: SignalingMessage): void {
-    if (!this.sessionEpoch || signal.sessionEpoch !== this.sessionEpoch) {
+    const isOfflineEpoch =
+      typeof signal.sessionEpoch === 'string' && signal.sessionEpoch.startsWith('offline-');
+    if ((!this.sessionEpoch || signal.sessionEpoch !== this.sessionEpoch) && !isOfflineEpoch) {
       return;
     }
 
-    const recipient = this.activeDevices.get(signal.recipientDeviceId);
+    let recipient = this.activeDevices.get(signal.recipientDeviceId);
+    if (!recipient) {
+      for (const [dId, dev] of this.activeDevices.entries()) {
+        if (dId !== signal.senderDeviceId) {
+          recipient = dev;
+          break;
+        }
+      }
+    }
     if (recipient) {
       recipient.ws.send(JSON.stringify(signal));
     }

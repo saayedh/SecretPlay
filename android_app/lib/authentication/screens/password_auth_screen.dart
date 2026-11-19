@@ -3,8 +3,7 @@ import 'package:flutter/material.dart';
 import '../../cryptography/crypto_service.dart';
 import '../../security/keystore_service.dart';
 import '../../security/auto_lock_service.dart';
-import 'device_verification_screen.dart';
-import '../../chat/screens/private_chat_screen.dart';
+import '../../contacts/screens/contacts_screen.dart';
 
 class PasswordAuthScreen extends StatefulWidget {
   final bool isFirstTimeSetup;
@@ -114,12 +113,22 @@ class _PasswordAuthScreenState extends State<PasswordAuthScreen> {
         await _proceedToApp();
       } else {
         final storedHash = await _keystore.getPassphraseHash();
-        final isValid = storedHash != null &&
+        final duressHash = await _keystore.getDuressPinHash();
+
+        final isRealPin = storedHash != null &&
             (storedHash == pin || await _crypto.verifyPassphrase(pin, storedHash));
+        final isDuressPin = !isRealPin &&
+            duressHash != null &&
+            duressHash.isNotEmpty &&
+            (duressHash == pin || await _crypto.verifyPassphrase(pin, duressHash));
+
         setState(() => _enteredPin = '');
 
-        if (isValid) {
-          await _proceedToApp();
+        if (isRealPin) {
+          await _proceedToApp(decoyMode: false);
+        } else if (isDuressPin) {
+          // Unlock silently in Decoy / Duress mode (wipes active RAM session & shows harmless decoy contacts)
+          await _proceedToApp(decoyMode: true);
         } else {
           _failedAttempts++;
           if (_failedAttempts >= 5) {
@@ -138,21 +147,14 @@ class _PasswordAuthScreenState extends State<PasswordAuthScreen> {
     }
   }
 
-  Future<void> _proceedToApp() async {
-    AutoLockService().unlock();
-    final hasTokenOrPeer = await _keystore.hasPairTokenOrPeer();
+  Future<void> _proceedToApp({bool decoyMode = false}) async {
+    AutoLockService().unlock(decoyMode: decoyMode);
 
     if (!mounted) return;
 
-    if (hasTokenOrPeer) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const PrivateChatScreen()),
-      );
-    } else {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const DeviceVerificationScreen()),
-      );
-    }
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => const ContactsScreen()),
+    );
   }
 
   @override

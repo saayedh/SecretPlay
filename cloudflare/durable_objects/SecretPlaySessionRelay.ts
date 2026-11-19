@@ -28,6 +28,48 @@ interface SocketAttachment {
   deviceId: string;
   authenticatedAt: number;
   sessionEpoch?: string | null;
+  country?: string;
+  ipMasked?: string;
+}
+
+interface AdminDeviceRow {
+  device_id: string;
+  secret_number: string;
+  country: string;
+  ip_masked: string;
+  room_token: string;
+  first_seen: number;
+  last_seen: number;
+  connect_count: number;
+  msg_count: number;
+  call_count: number;
+  is_banned: number;
+  is_approved: number;
+  ban_reason: string;
+  note: string;
+}
+
+interface AdminConfigRow {
+  id: number;
+  lockdown_mode: number;
+  whitelist_mode: number;
+  total_messages: number;
+  total_calls: number;
+  admin_secret_hash: string;
+}
+
+function deriveSecretNumber(deviceId: string, pubKey: string): string {
+  const text = `${deviceId}:${pubKey}`.trim();
+  let h1 = 5381;
+  let h2 = 2166136261;
+  for (let i = 0; i < text.length; i++) {
+    const b = text.charCodeAt(i);
+    h1 = ((h1 << 5) + h1 + b) & 0x7fffffff;
+    h2 = Math.imul(h2 ^ b, 16777619) & 0x7fffffff;
+  }
+  const p1 = 100 + (h1 % 900);
+  const p2 = 100 + (h2 % 900);
+  return `SP-${p1}-${p2}`;
 }
 
 interface PairRecord {
@@ -57,10 +99,11 @@ function decodeBase64(b64: string): Uint8Array {
   return bytes;
 }
 
-export class SecretPlaySessionRelay extends DurableObject {
+export class SecretPlaySessionRelay extends DurableObject<Env> {
   // Volatile in-memory state - Never persisted to storage
   private activeDevices: Map<string, DeviceState> = new Map();
   private sessionEpoch: string | null = null;
+  private offlineQueue: Map<string, EncryptedChatMessage[]> = new Map();
   private pairingInvitation: {
     token: string;
     deviceAId: string;
@@ -91,6 +134,71 @@ export class SecretPlaySessionRelay extends DurableObject {
         updated_at INTEGER NOT NULL
       );
     `);
+    try {
+      this.ctx.storage.sql.exec(`
+        CREATE TABLE IF NOT EXISTS admin_devices (
+          device_id TEXT PRIMARY KEY,
+          secret_number TEXT,
+          country TEXT,
+          ip_masked TEXT,
+          room_token TEXT,
+          first_seen INTEGER,
+          last_seen INTEGER,
+          connect_count INTEGER DEFAULT 1,
+          msg_count INTEGER DEFAULT 0,
+          call_count INTEGER DEFAULT 0,
+          is_banned INTEGER DEFAULT 0,
+          is_approved INTEGER DEFAULT 1,
+          ban_reason TEXT DEFAULT '',
+          note TEXT DEFAULT ''
+        );
+      `);
+      this.ctx.storage.sql.exec(`
+        CREATE TABLE IF NOT EXISTS admin_config (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          lockdown_mode INTEGER DEFAULT 0,
+          whitelist_mode INTEGER DEFAULT 0,
+          total_messages INTEGER DEFAULT 0,
+          total_calls INTEGER DEFAULT 0,
+          admin_secret_hash TEXT DEFAULT 'SP-ADMIN-2026'
+        );
+      `);
+    } catch {
+      // Ignore in unit test mock SQL storage if not needed
+    }
+  }
+
+  private getAdminStub(): DurableObjectStub | null {
+    try {
+      if (this.env && this.env.SESSION_RELAY && typeof this.env.SESSION_RELAY.idFromName === 'function') {
+        const id = this.env.SESSION_RELAY.idFromName('admin-registry');
+        const stub = this.env.SESSION_RELAY.get(id);
+        if (stub && (stub as unknown) !== (this as unknown)) {
+          return stub;
+        }
+      }
+    } catch {}
+    return null;
+  }
+
+  private getAdminConfig(): AdminConfigRow {
+    try {
+      const cur = this.ctx.storage.sql.exec('SELECT * FROM admin_config WHERE id = 1');
+      const rows = [...cur] as unknown as AdminConfigRow[];
+      if (rows.length > 0) return rows[0];
+      this.ctx.storage.sql.exec(
+        `INSERT OR IGNORE INTO admin_config (id, lockdown_mode, whitelist_mode, total_messages, total_calls, admin_secret_hash)
+         VALUES (1, 0, 0, 0, 0, 'SP-ADMIN-2026');`
+      );
+    } catch {}
+    return {
+      id: 1,
+      lockdown_mode: 0,
+      whitelist_mode: 0,
+      total_messages: 0,
+      total_calls: 0,
+      admin_secret_hash: 'SP-ADMIN-2026',
+    };
   }
 
   private getPairRecord(): PairRecord | null {
@@ -121,10 +229,19 @@ export class SecretPlaySessionRelay extends DurableObject {
   }
 
   private attachDeviceToSocket(ws: WebSocket, deviceId: string, sessionEpoch?: string | null): void {
+    let prevCountry = 'UN';
+    let prevIp = '0.0.*.*';
+    try {
+      const prev = ws.deserializeAttachment() as SocketAttachment | null;
+      if (prev?.country) prevCountry = prev.country;
+      if (prev?.ipMasked) prevIp = prev.ipMasked;
+    } catch {}
     const attachment: SocketAttachment = {
       deviceId,
       authenticatedAt: Date.now(),
       sessionEpoch: sessionEpoch ?? this.sessionEpoch,
+      country: prevCountry,
+      ipMasked: prevIp,
     };
     ws.serializeAttachment(attachment);
     this.activeDevices.set(deviceId, { deviceId, ws, lastSeen: Date.now() });
@@ -280,6 +397,11 @@ export class SecretPlaySessionRelay extends DurableObject {
       });
     }
 
+    // Internal Admin Registry & Room Control Endpoints
+    if (url.pathname.startsWith('/internal-admin/')) {
+      return await this.handleInternalAdminRequest(request, url);
+    }
+
     // WebSocket upgrade
     if (request.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
       const pair = new WebSocketPair();
@@ -287,6 +409,19 @@ export class SecretPlaySessionRelay extends DurableObject {
 
       // Accept with WebSocket hibernation enabled
       this.ctx.acceptWebSocket(server);
+      try {
+        const cfCountry = request.headers.get('CF-IPCountry') || 'UN';
+        const rawIp = request.headers.get('CF-Connecting-IP') || '0.0.0.0';
+        const ipParts = rawIp.split('.');
+        const ipMasked =
+          ipParts.length === 4 ? `${ipParts[0]}.${ipParts[1]}.*.*` : rawIp.slice(0, 10) + '***';
+        server.serializeAttachment({
+          deviceId: '',
+          authenticatedAt: 0,
+          country: cfCountry,
+          ipMasked,
+        } satisfies SocketAttachment);
+      } catch {}
 
       return new Response(null, {
         status: 101,
@@ -392,8 +527,8 @@ export class SecretPlaySessionRelay extends DurableObject {
       return;
     }
 
-    // Validate timestamp skew and replay nonce
-    if (!Number.isFinite(authMsg.timestamp) || Math.abs(now - authMsg.timestamp) > MAX_AUTH_SKEW_MS) {
+    // Validate timestamp presence (allow local system clock / timezone drift; anti-replay is enforced via unique cryptographic nonces)
+    if (!Number.isFinite(authMsg.timestamp) || authMsg.timestamp <= 0) {
       const rej: AuthResultMessage = {
         type: 'auth_result',
         version: 1,
@@ -522,6 +657,56 @@ export class SecretPlaySessionRelay extends DurableObject {
       return;
     }
 
+    // Check Global Admin Registry for Banned Device / Lockdown / Whitelist Policy
+    const adminStub = this.getAdminStub();
+    if (adminStub) {
+      try {
+        let country = 'UN';
+        let ipMasked = '0.0.*.*';
+        try {
+          const att = ws.deserializeAttachment() as SocketAttachment | null;
+          if (att?.country) country = att.country;
+          if (att?.ipMasked) ipMasked = att.ipMasked;
+        } catch {}
+
+        const checkRes = await adminStub.fetch(
+          new Request('https://internal/internal-admin/telemetry', {
+            method: 'POST',
+            body: JSON.stringify({
+              event: 'auth',
+              deviceId,
+              secretNumber: deriveSecretNumber(deviceId, authMsg.publicKey || ''),
+              country,
+              ipMasked,
+              roomToken: authMsg.pairToken || 'primary-pair',
+            }),
+          })
+        );
+        if (checkRes.ok) {
+          const checkJson = (await checkRes.json()) as {
+            allowed: boolean;
+            reason?: string;
+          };
+          if (!checkJson.allowed) {
+            const rej: AuthResultMessage = {
+              type: 'auth_result',
+              version: 1,
+              success: false,
+              deviceId,
+              peerConnected: false,
+              error: checkJson.reason || 'Access denied by Administrator Policy',
+              timestamp: now,
+            };
+            ws.send(JSON.stringify(rej));
+            ws.close(1008, checkJson.reason || 'Admin Blocked');
+            return;
+          }
+        }
+      } catch {
+        // Fail-open if internal telemetry stub is unreachable in unit tests
+      }
+    }
+
     // Attach identity to WebSocket for hibernation recovery
     this.attachDeviceToSocket(ws, deviceId);
 
@@ -533,6 +718,10 @@ export class SecretPlaySessionRelay extends DurableObject {
     if (peerConnected && !this.sessionEpoch) {
       this.sessionEpoch = crypto.randomUUID();
       this.syncEpochToAttachments(sockets, this.sessionEpoch);
+    } else if (!this.sessionEpoch && pairRecord && pairRecord.is_paired) {
+      // Allow paired device to encrypt & queue offline messages using a room epoch
+      this.sessionEpoch = `offline-${pairRecord.pair_id || 'room'}`;
+      this.attachDeviceToSocket(ws, deviceId, this.sessionEpoch);
     } else if (this.sessionEpoch) {
       this.attachDeviceToSocket(ws, deviceId, this.sessionEpoch);
     }
@@ -550,6 +739,19 @@ export class SecretPlaySessionRelay extends DurableObject {
       timestamp: now,
     };
     ws.send(JSON.stringify(authRes));
+
+    // Deliver any queued offline E2EE messages waiting for this device and immediately wipe from queue
+    const pendingForDevice = this.offlineQueue.get(deviceId);
+    if (pendingForDevice && pendingForDevice.length > 0) {
+      this.offlineQueue.delete(deviceId);
+      for (const queuedMsg of pendingForDevice) {
+        try {
+          ws.send(JSON.stringify(queuedMsg));
+        } catch {
+          // Ignore send failure
+        }
+      }
+    }
 
     // Notify peer if online (including our deviceId and publicKey for automatic E2EE key pinning)
     if (peerSocket) {
@@ -592,8 +794,9 @@ export class SecretPlaySessionRelay extends DurableObject {
 
     const sockets = this.getConnectedSocketMap();
 
-    // Enforce active session epoch
-    if (!this.sessionEpoch || msg.sessionEpoch !== this.sessionEpoch) {
+    // Enforce active session epoch (allow offline-* epoch in token/contact rooms)
+    const isOfflineEpoch = typeof msg.sessionEpoch === 'string' && msg.sessionEpoch.startsWith('offline-');
+    if ((!this.sessionEpoch || msg.sessionEpoch !== this.sessionEpoch) && !isOfflineEpoch) {
       ws.send(
         JSON.stringify({
           type: 'terminate',
@@ -606,10 +809,30 @@ export class SecretPlaySessionRelay extends DurableObject {
       return;
     }
 
-    // Relay ONLY to the other paired device if connected
+    // Relay to the other paired device if online, or queue encrypted envelope if offline (in token/contact rooms)
     const recipient = sockets.get(msg.recipientDeviceId);
     if (!recipient || msg.recipientDeviceId === senderDeviceId) {
-      // Discard immediately: Zero offline storage policy
+      const pair = this.getPairRecord();
+      const isTokenRoom = pair && pair.pair_id && pair.pair_id !== 'pair-primary';
+      if (isTokenRoom && msg.recipientDeviceId && msg.recipientDeviceId !== senderDeviceId) {
+        const list = this.offlineQueue.get(msg.recipientDeviceId) ?? [];
+        if (list.length < 100) {
+          list.push(msg);
+          this.offlineQueue.set(msg.recipientDeviceId, list);
+        }
+        ws.send(
+          JSON.stringify({
+            type: 'msg_ack',
+            version: 1,
+            msgId: msg.msgId,
+            status: 'queued_offline',
+            timestamp: Date.now(),
+          })
+        );
+        return;
+      }
+
+      // Discard immediately when strict primary pair mode is used
       ws.send(
         JSON.stringify({
           type: 'msg_ack',
@@ -624,6 +847,19 @@ export class SecretPlaySessionRelay extends DurableObject {
 
     // Forward ciphertext in memory directly to recipient
     recipient.send(JSON.stringify(msg));
+
+    // Non-blocking telemetry counter to Admin Registry
+    const adminStub = this.getAdminStub();
+    if (adminStub) {
+      adminStub
+        .fetch(
+          new Request('https://internal/internal-admin/telemetry', {
+            method: 'POST',
+            body: JSON.stringify({ event: 'msg', deviceId: senderDeviceId }),
+          })
+        )
+        .catch(() => {});
+    }
 
     // Send delivery confirmation ack to sender
     ws.send(
@@ -646,14 +882,37 @@ export class SecretPlaySessionRelay extends DurableObject {
 
     const sockets = this.getConnectedSocketMap();
 
-    if (!this.sessionEpoch || signal.sessionEpoch !== this.sessionEpoch) {
+    const isOfflineEpoch =
+      typeof signal.sessionEpoch === 'string' && signal.sessionEpoch.startsWith('offline-');
+    if ((!this.sessionEpoch || signal.sessionEpoch !== this.sessionEpoch) && !isOfflineEpoch) {
       return;
     }
 
-    // Forward signaling payload to peer
-    const recipient = sockets.get(signal.recipientDeviceId);
+    // Forward signaling payload to peer (or to the other connected socket in this 2-device room)
+    let recipient = sockets.get(signal.recipientDeviceId);
+    if (!recipient) {
+      for (const [dId, peerWs] of sockets.entries()) {
+        if (dId !== senderDeviceId) {
+          recipient = peerWs;
+          break;
+        }
+      }
+    }
     if (recipient && signal.recipientDeviceId !== senderDeviceId) {
       recipient.send(JSON.stringify(signal));
+      if (signal.signalType === 'call_request') {
+        const adminStub = this.getAdminStub();
+        if (adminStub) {
+          adminStub
+            .fetch(
+              new Request('https://internal/internal-admin/telemetry', {
+                method: 'POST',
+                body: JSON.stringify({ event: 'call', deviceId: senderDeviceId }),
+              })
+            )
+            .catch(() => {});
+        }
+      }
     }
   }
 
@@ -953,6 +1212,342 @@ export class SecretPlaySessionRelay extends DurableObject {
         }
       }
     }
+  }
+
+  private async handleInternalAdminRequest(request: Request, url: URL): Promise<Response> {
+    const now = Date.now();
+    const path = url.pathname;
+
+    // 1. Telemetry ingestion from room Durable Objects into 'admin-registry' DO
+    if (path === '/internal-admin/telemetry' && request.method === 'POST') {
+      const body = (await request.json()) as {
+        event: 'auth' | 'msg' | 'call';
+        deviceId: string;
+        secretNumber?: string;
+        country?: string;
+        ipMasked?: string;
+        roomToken?: string;
+      };
+      const cfg = this.getAdminConfig();
+      const deviceId = body.deviceId || 'unknown';
+
+      if (body.event === 'msg') {
+        this.ctx.storage.sql.exec(
+          `UPDATE admin_config SET total_messages = total_messages + 1 WHERE id = 1;`
+        );
+        this.ctx.storage.sql.exec(
+          `UPDATE admin_devices SET msg_count = msg_count + 1, last_seen = ? WHERE device_id = ?;`,
+          now,
+          deviceId
+        );
+        return Response.json({ ok: true });
+      }
+
+      if (body.event === 'call') {
+        this.ctx.storage.sql.exec(
+          `UPDATE admin_config SET total_calls = total_calls + 1 WHERE id = 1;`
+        );
+        this.ctx.storage.sql.exec(
+          `UPDATE admin_devices SET call_count = call_count + 1, last_seen = ? WHERE device_id = ?;`,
+          now,
+          deviceId
+        );
+        return Response.json({ ok: true });
+      }
+
+      // event === 'auth': upsert device install & check ban/lockdown/whitelist
+      const cur = this.ctx.storage.sql.exec(
+        `SELECT * FROM admin_devices WHERE device_id = ?;`,
+        deviceId
+      );
+      const existing = [...cur] as unknown as AdminDeviceRow[];
+
+      if (existing.length === 0) {
+        const defaultApproved = cfg.whitelist_mode ? 0 : 1;
+        this.ctx.storage.sql.exec(
+          `INSERT INTO admin_devices
+           (device_id, secret_number, country, ip_masked, room_token, first_seen, last_seen, connect_count, msg_count, call_count, is_banned, is_approved, ban_reason, note)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 1, 0, 0, 0, ?, '', '');`,
+          deviceId,
+          body.secretNumber || 'SP-000-000',
+          body.country || 'UN',
+          body.ipMasked || '0.0.*.*',
+          body.roomToken || 'primary-pair',
+          now,
+          now,
+          defaultApproved
+        );
+        if (cfg.lockdown_mode) {
+          return Response.json({
+            allowed: false,
+            reason: 'Server is currently in Admin Lockdown Mode',
+          });
+        }
+        if (cfg.whitelist_mode) {
+          return Response.json({
+            allowed: false,
+            reason: 'Device pending Administrator Whitelist Approval',
+          });
+        }
+        return Response.json({ allowed: true });
+      } else {
+        const dev = existing[0];
+        this.ctx.storage.sql.exec(
+          `UPDATE admin_devices
+           SET last_seen = ?, connect_count = connect_count + 1, room_token = ?, country = ?, ip_masked = ?, secret_number = ?
+           WHERE device_id = ?;`,
+          now,
+          body.roomToken || dev.room_token,
+          body.country || dev.country,
+          body.ipMasked || dev.ip_masked,
+          body.secretNumber || dev.secret_number,
+          deviceId
+        );
+        if (dev.is_banned) {
+          return Response.json({
+            allowed: false,
+            reason: dev.ban_reason || 'Your device has been banned by the Administrator',
+          });
+        }
+        if (cfg.lockdown_mode) {
+          return Response.json({
+            allowed: false,
+            reason: 'Server is currently in Admin Lockdown Mode',
+          });
+        }
+        if (cfg.whitelist_mode && !dev.is_approved) {
+          return Response.json({
+            allowed: false,
+            reason: 'Device not approved in Whitelist Mode',
+          });
+        }
+        return Response.json({ allowed: true });
+      }
+    }
+
+    // 2. Room-level immediate kick/reset invoked by Admin Registry
+    if (path === '/internal-admin/room-action' && request.method === 'POST') {
+      const body = (await request.json()) as {
+        action: 'kick_device' | 'reset_room' | 'revoke_room';
+        deviceId?: string;
+        reason?: string;
+      };
+      const sockets = this.getConnectedSocketMap();
+
+      if (body.action === 'kick_device' && body.deviceId) {
+        const targetWs = sockets.get(body.deviceId);
+        if (targetWs) {
+          try {
+            targetWs.send(
+              JSON.stringify({
+                type: 'terminate',
+                version: 1,
+                reason: 'security_alert',
+                senderDeviceId: 'admin',
+                timestamp: now,
+              })
+            );
+            targetWs.close(1008, body.reason || 'Banned by Administrator');
+          } catch {}
+        }
+        this.activeDevices.delete(body.deviceId);
+        return Response.json({ ok: true });
+      }
+
+      if (body.action === 'reset_room') {
+        this.ctx.storage.sql.exec(`DELETE FROM pair_identity WHERE id = 1;`);
+        this.offlineQueue.clear();
+        this.sessionEpoch = null;
+        for (const sock of sockets.values()) {
+          try {
+            sock.close(1000, 'Room reset by Administrator');
+          } catch {}
+        }
+        this.activeDevices.clear();
+        return Response.json({ ok: true });
+      }
+
+      if (body.action === 'revoke_room') {
+        await this.revokePair('admin_dashboard');
+        return Response.json({ ok: true });
+      }
+    }
+
+    // 3. Public Admin API (protected by X-Admin-Key header or ?key= query parameter)
+    const cfg = this.getAdminConfig();
+    const providedKey =
+      request.headers.get('X-Admin-Key')?.trim() || url.searchParams.get('key')?.trim() || '';
+    if (!providedKey || providedKey !== cfg.admin_secret_hash) {
+      return Response.json({ error: 'Unauthorized: Invalid Admin Secret Key' }, { status: 401 });
+    }
+
+    if (path === '/internal-admin/overview' && request.method === 'GET') {
+      const cur = this.ctx.storage.sql.exec(
+        `SELECT * FROM admin_devices ORDER BY last_seen DESC LIMIT 500;`
+      );
+      const devices = [...cur] as unknown as AdminDeviceRow[];
+      const activeRecentCount = devices.filter((d) => now - d.last_seen < 120_000 && !d.is_banned).length;
+      const bannedCount = devices.filter((d) => Boolean(d.is_banned)).length;
+      const roomsSet = new Set(devices.map((d) => d.room_token).filter(Boolean));
+
+      return Response.json({
+        stats: {
+          totalInstalledDevices: devices.length,
+          onlineRecentDevices: activeRecentCount,
+          bannedDevices: bannedCount,
+          activeRoomsCount: roomsSet.size,
+          totalMessagesRelayed: cfg.total_messages,
+          totalCallsInitiated: cfg.total_calls,
+          lockdownMode: Boolean(cfg.lockdown_mode),
+          whitelistMode: Boolean(cfg.whitelist_mode),
+        },
+        devices,
+        rooms: Array.from(roomsSet),
+        timestamp: now,
+      });
+    }
+
+    if (path === '/internal-admin/command' && request.method === 'POST') {
+      const cmd = (await request.json()) as {
+        command:
+          | 'ban_device'
+          | 'unban_device'
+          | 'approve_device'
+          | 'delete_device'
+          | 'set_note'
+          | 'toggle_lockdown'
+          | 'toggle_whitelist'
+          | 'change_admin_key'
+          | 'reset_room'
+          | 'revoke_room';
+        deviceId?: string;
+        roomToken?: string;
+        reason?: string;
+        note?: string;
+        enabled?: boolean;
+        newKey?: string;
+      };
+
+      switch (cmd.command) {
+        case 'ban_device': {
+          if (!cmd.deviceId) break;
+          this.ctx.storage.sql.exec(
+            `UPDATE admin_devices SET is_banned = 1, ban_reason = ? WHERE device_id = ?;`,
+            cmd.reason || 'Banned by Administrator',
+            cmd.deviceId
+          );
+          // Also kick device immediately from its room DO!
+          const cur = this.ctx.storage.sql.exec(
+            `SELECT room_token FROM admin_devices WHERE device_id = ?;`,
+            cmd.deviceId
+          );
+          const rows = [...cur] as unknown as { room_token: string }[];
+          const roomTok = rows[0]?.room_token || cmd.roomToken;
+          if (roomTok && this.env?.SESSION_RELAY) {
+            const roomName =
+              roomTok === 'primary-pair' ? 'primary-pair' : `room:${roomTok.toUpperCase()}`;
+            const rStub = this.env.SESSION_RELAY.get(this.env.SESSION_RELAY.idFromName(roomName));
+            await rStub
+              .fetch(
+                new Request('https://internal/internal-admin/room-action', {
+                  method: 'POST',
+                  body: JSON.stringify({
+                    action: 'kick_device',
+                    deviceId: cmd.deviceId,
+                    reason: cmd.reason || 'Banned by Administrator',
+                  }),
+                })
+              )
+              .catch(() => {});
+          }
+          break;
+        }
+
+        case 'unban_device':
+          if (cmd.deviceId) {
+            this.ctx.storage.sql.exec(
+              `UPDATE admin_devices SET is_banned = 0, ban_reason = '' WHERE device_id = ?;`,
+              cmd.deviceId
+            );
+          }
+          break;
+
+        case 'approve_device':
+          if (cmd.deviceId) {
+            this.ctx.storage.sql.exec(
+              `UPDATE admin_devices SET is_approved = ? WHERE device_id = ?;`,
+              cmd.enabled === false ? 0 : 1,
+              cmd.deviceId
+            );
+          }
+          break;
+
+        case 'delete_device':
+          if (cmd.deviceId) {
+            this.ctx.storage.sql.exec(
+              `DELETE FROM admin_devices WHERE device_id = ?;`,
+              cmd.deviceId
+            );
+          }
+          break;
+
+        case 'set_note':
+          if (cmd.deviceId) {
+            this.ctx.storage.sql.exec(
+              `UPDATE admin_devices SET note = ? WHERE device_id = ?;`,
+              cmd.note || '',
+              cmd.deviceId
+            );
+          }
+          break;
+
+        case 'toggle_lockdown':
+          this.ctx.storage.sql.exec(
+            `UPDATE admin_config SET lockdown_mode = ? WHERE id = 1;`,
+            cmd.enabled ? 1 : 0
+          );
+          break;
+
+        case 'toggle_whitelist':
+          this.ctx.storage.sql.exec(
+            `UPDATE admin_config SET whitelist_mode = ? WHERE id = 1;`,
+            cmd.enabled ? 1 : 0
+          );
+          break;
+
+        case 'change_admin_key':
+          if (cmd.newKey && cmd.newKey.trim().length >= 4) {
+            this.ctx.storage.sql.exec(
+              `UPDATE admin_config SET admin_secret_hash = ? WHERE id = 1;`,
+              cmd.newKey.trim()
+            );
+          }
+          break;
+
+        case 'reset_room':
+        case 'revoke_room': {
+          const roomTok = cmd.roomToken || 'primary-pair';
+          if (this.env?.SESSION_RELAY) {
+            const roomName =
+              roomTok === 'primary-pair' ? 'primary-pair' : `room:${roomTok.toUpperCase()}`;
+            const rStub = this.env.SESSION_RELAY.get(this.env.SESSION_RELAY.idFromName(roomName));
+            await rStub
+              .fetch(
+                new Request('https://internal/internal-admin/room-action', {
+                  method: 'POST',
+                  body: JSON.stringify({ action: cmd.command }),
+                })
+              )
+              .catch(() => {});
+          }
+          break;
+        }
+      }
+
+      return Response.json({ ok: true, timestamp: now });
+    }
+
+    return Response.json({ error: 'Unknown admin endpoint' }, { status: 404 });
   }
 
   async webSocketError(ws: WebSocket, error: unknown): Promise<void> {

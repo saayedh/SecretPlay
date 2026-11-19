@@ -19,6 +19,13 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
 
   StreamSubscription? _msgSub;
   StreamSubscription? _termSub;
+  Timer? _burnSweepTimer;
+
+  final StreamController<EphemeralChatMessage> _flashStreamController =
+      StreamController<EphemeralChatMessage>.broadcast();
+
+  /// Fires whenever an incoming Flash Hologram / Lock-Screen message arrives
+  Stream<EphemeralChatMessage> get onFlashMessage => _flashStreamController.stream;
 
   ChatSessionNotifier({
     required CryptoService cryptoService,
@@ -39,8 +46,23 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
     });
 
     _termSub = _wsClient.onTerminate.listen((reason) {
-      clearSession();
+      // Only wipe chat memory on explicit security/peer lock, not transient network hiccups
+      if (reason == 'revoked' || reason == 'security_alert' || reason == 'manual_exit') {
+        clearSession();
+      }
     });
+
+    // Periodic 1-second sweep to auto-destroy expired Burn-After-Reading messages
+    _burnSweepTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      if (state.any((m) => m.expiresAtMs != null && m.expiresAtMs! <= now)) {
+        state = state.where((m) => m.expiresAtMs == null || m.expiresAtMs! > now).toList();
+      }
+    });
+  }
+
+  void removeMessageById(String msgId) {
+    state = state.where((m) => m.id != msgId).toList();
   }
 
   void initializeSession({
@@ -49,24 +71,50 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
     required String peerPublicKeyBase64,
     required SimpleKeyPair myIdentityKeyPair,
   }) {
+    final peerChanged = _peerDeviceId != peerDeviceId || _peerPublicKeyBase64 != peerPublicKeyBase64;
     _myDeviceId = myDeviceId;
     _peerDeviceId = peerDeviceId;
     _peerPublicKeyBase64 = peerPublicKeyBase64;
     _myIdentityKeyPair = myIdentityKeyPair;
-    _cryptoService.resetSequence();
+    if (peerChanged) {
+      _cryptoService.resetSequence();
+    }
   }
 
-  Future<void> sendMessage(String text) async {
-    if (text.trim().isEmpty) return;
-    if (_peerPublicKeyBase64 == null || _myIdentityKeyPair == null || _wsClient.sessionEpoch == null) {
-      debugPrint('[Chat] Cannot send message: active mutual session epoch not established.');
+  Future<void> sendMessage(
+    String text, {
+    ChatContentType contentType = ChatContentType.text,
+    String? mediaBase64,
+    String? stickerId,
+    bool isFlashScreen = false,
+    int? burnAfterSeconds,
+    bool isOneTimeVoice = false,
+    bool isCyberPitch = false,
+    int? voiceDurationSec,
+  }) async {
+    if (contentType == ChatContentType.text && text.trim().isEmpty) return;
+    if (_peerPublicKeyBase64 == null || _myIdentityKeyPair == null) {
+      debugPrint('[Chat] Cannot send message: peer public key not yet exchanged.');
       return;
     }
+    final activeEpoch = _wsClient.sessionEpoch ?? 'offline-room';
+    final now = DateTime.now().millisecondsSinceEpoch;
 
     final outgoingMsg = EphemeralChatMessage(
       senderDeviceId: _myDeviceId ?? 'me',
       text: text,
-      timestamp: DateTime.now().millisecondsSinceEpoch,
+      contentType: contentType,
+      mediaBase64: mediaBase64,
+      stickerId: stickerId,
+      isFlashScreen: isFlashScreen,
+      burnAfterSeconds: burnAfterSeconds,
+      expiresAtMs: (burnAfterSeconds != null && burnAfterSeconds > 0)
+          ? now + (burnAfterSeconds * 1000)
+          : null,
+      isOneTimeVoice: isOneTimeVoice,
+      isCyberPitch: isCyberPitch,
+      voiceDurationSec: voiceDurationSec,
+      timestamp: now,
       isMe: true,
       status: MessageDeliveryStatus.sending,
     );
@@ -75,11 +123,12 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
     state = [...state, outgoingMsg];
 
     try {
+      final serializedPayload = outgoingMsg.toEncryptedPayloadString();
       final envelope = await _cryptoService.encryptMessage(
-        plaintext: text,
+        plaintext: serializedPayload,
         recipientPublicIdentityKeyBase64: _peerPublicKeyBase64!,
         senderIdentityKeyPair: _myIdentityKeyPair!,
-        sessionEpoch: _wsClient.sessionEpoch!,
+        sessionEpoch: activeEpoch,
       );
 
       _wsClient.sendRaw({
@@ -88,7 +137,7 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
         'msgId': outgoingMsg.id,
         'senderDeviceId': _myDeviceId,
         'recipientDeviceId': _peerDeviceId,
-        'sessionEpoch': _wsClient.sessionEpoch,
+        'sessionEpoch': activeEpoch,
         'ciphertext': envelope.ciphertextBase64,
         'iv': envelope.ivBase64,
         'authTag': envelope.authTagBase64,
@@ -98,7 +147,6 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
         'timestamp': DateTime.now().millisecondsSinceEpoch,
       });
 
-      // Update delivery status in memory
       state = [
         for (final m in state)
           if (m.id == outgoingMsg.id) m.copyWith(status: MessageDeliveryStatus.sent) else m
@@ -122,9 +170,11 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
           for (final m in state)
             if (m.id == msgId)
               m.copyWith(
-                status: ackStatus == 'relayed'
+                status: (ackStatus == 'relayed' || ackStatus == 'delivered')
                     ? MessageDeliveryStatus.relayed
-                    : MessageDeliveryStatus.failed,
+                    : (ackStatus == 'queued_offline'
+                        ? MessageDeliveryStatus.sent
+                        : MessageDeliveryStatus.failed),
               )
             else
               m
@@ -150,19 +200,27 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
         envelope: envelope,
         recipientIdentityKeyPair: _myIdentityKeyPair!,
         senderPublicIdentityKeyBase64: _peerPublicKeyBase64!,
-        sessionEpoch: _wsClient.sessionEpoch ?? (payload['sessionEpoch'] as String? ?? ''),
+        sessionEpoch: (payload['sessionEpoch'] as String?) ?? (_wsClient.sessionEpoch ?? ''),
       );
 
-      final msg = EphemeralChatMessage(
+      final msg = EphemeralChatMessage.fromDecryptedPayload(
         id: payload['msgId'] as String?,
         senderDeviceId: payload['senderDeviceId'] as String,
-        text: decrypted,
+        decryptedText: decrypted,
         timestamp: payload['timestamp'] as int? ?? DateTime.now().millisecondsSinceEpoch,
         isMe: false,
         status: MessageDeliveryStatus.relayed,
       );
 
       state = [...state, msg];
+
+      if (msg.isFlashScreen) {
+        _flashStreamController.add(msg);
+        await _autoLockService.wakeScreenForFlashMessage(
+          title: '⚡ SecretPlay Live Flash',
+          subtitle: msg.text.isNotEmpty ? msg.text : 'پیام هولوگرافیک روی صفحه دریافت شد!',
+        );
+      }
     } catch (e) {
       debugPrint('[Chat] Inbound decryption/integrity failed: $e');
     }
@@ -188,6 +246,8 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
     _autoLockService.removeLockListener(_handleAutoLock);
     _msgSub?.cancel();
     _termSub?.cancel();
+    _burnSweepTimer?.cancel();
+    _flashStreamController.close();
     clearSession();
     super.dispose();
   }

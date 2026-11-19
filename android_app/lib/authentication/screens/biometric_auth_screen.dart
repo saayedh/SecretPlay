@@ -1,10 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:local_auth/local_auth.dart';
-import '../../security/keystore_service.dart';
 import '../../security/auto_lock_service.dart';
 import 'password_auth_screen.dart';
-import 'device_verification_screen.dart';
-import '../../chat/screens/private_chat_screen.dart';
+import '../../contacts/screens/contacts_screen.dart';
 
 class BiometricAuthScreen extends StatefulWidget {
   const BiometricAuthScreen({super.key});
@@ -15,7 +13,6 @@ class BiometricAuthScreen extends StatefulWidget {
 
 class _BiometricAuthScreenState extends State<BiometricAuthScreen> {
   final LocalAuthentication _auth = LocalAuthentication();
-  final KeystoreService _keystore = KeystoreService();
   String? _statusMessage;
 
   @override
@@ -39,18 +36,10 @@ class _BiometricAuthScreenState extends State<BiometricAuthScreen> {
 
       if (authenticated) {
         AutoLockService().unlock();
-        final hasTokenOrPeer = await _keystore.hasPairTokenOrPeer();
         if (!mounted) return;
-
-        if (hasTokenOrPeer) {
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (_) => const PrivateChatScreen()),
-          );
-        } else {
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(builder: (_) => const DeviceVerificationScreen()),
-          );
-        }
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const ContactsScreen()),
+        );
       } else {
         setState(() => _statusMessage = 'تایید اثر انگشت لغو شد.');
       }
