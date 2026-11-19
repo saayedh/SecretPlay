@@ -76,6 +76,42 @@ class EphemeralChatMessage {
     );
   }
 
+  Map<String, dynamic> toStorageJson() => {
+        'id': id,
+        'senderDeviceId': senderDeviceId,
+        'text': text,
+        'contentType': contentType.name,
+        if (mediaBase64 != null) 'mediaBase64': mediaBase64,
+        if (stickerId != null) 'stickerId': stickerId,
+        'isFlashScreen': isFlashScreen,
+        'timestamp': timestamp,
+        'isMe': isMe,
+        'status': status.name,
+      };
+
+  factory EphemeralChatMessage.fromStorageJson(Map<String, dynamic> json) {
+    final kindStr = json['contentType'] as String? ?? 'text';
+    final statusStr = json['status'] as String? ?? 'relayed';
+    return EphemeralChatMessage(
+      id: json['id'] as String?,
+      senderDeviceId: (json['senderDeviceId'] as String?) ?? 'peer',
+      text: (json['text'] as String?) ?? '',
+      contentType: ChatContentType.values.firstWhere(
+        (e) => e.name == kindStr,
+        orElse: () => ChatContentType.text,
+      ),
+      mediaBase64: json['mediaBase64'] as String?,
+      stickerId: json['stickerId'] as String?,
+      isFlashScreen: json['isFlashScreen'] == true,
+      timestamp: (json['timestamp'] as int?) ?? DateTime.now().millisecondsSinceEpoch,
+      isMe: json['isMe'] == true,
+      status: MessageDeliveryStatus.values.firstWhere(
+        (e) => e.name == statusStr,
+        orElse: () => MessageDeliveryStatus.relayed,
+      ),
+    );
+  }
+
   /// Packs rich content (image/drawing/sticker/voice/flash/burn timer) into an E2EE JSON envelope
   String toEncryptedPayloadString() {
     if (contentType == ChatContentType.text &&

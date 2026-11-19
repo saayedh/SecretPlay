@@ -171,7 +171,7 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
     _peerPublicKey = peerPub;
 
     final sessionNotifier = ref.read(chatSessionProvider.notifier);
-    sessionNotifier.switchRoom(savedToken);
+    await sessionNotifier.switchRoom(savedToken);
     if (peerId != null && peerPub != null && peerPub.isNotEmpty) {
       sessionNotifier.initializeSession(
         myDeviceId: deviceId,
@@ -827,7 +827,9 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
                         icon: const Icon(Icons.more_vert_rounded, color: Colors.white70),
                         color: const Color(0xFF171A26),
                         onSelected: (val) {
-                          if (val == 'lock') {
+                          if (val == 'clear_chat') {
+                            ref.read(chatSessionProvider.notifier).clearCurrentRoomHistoryPermanently();
+                          } else if (val == 'lock') {
                             _manualLockAndExit();
                           } else if (val == 'lang') {
                             ref.read(appLocaleProvider.notifier).toggleLanguage();
@@ -848,6 +850,13 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
                           }
                         },
                         itemBuilder: (_) => [
+                          PopupMenuItem(
+                            value: 'clear_chat',
+                            child: Text(
+                              s.tr('🗑️ پاک کردن تاریخچه این چت', '🗑️ Clear Chat History'),
+                              style: const TextStyle(color: Colors.amber),
+                            ),
+                          ),
                           PopupMenuItem(
                             value: 'lock',
                             child: Text(

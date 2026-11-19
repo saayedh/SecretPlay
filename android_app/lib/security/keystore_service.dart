@@ -170,6 +170,21 @@ class KeystoreService {
     return await _read(AppConstants.keyDuressPinHash);
   }
 
+  Future<void> saveRoomChatHistory(String roomToken, String jsonMessages) async {
+    final key = 'sp_chat_hist_${roomToken.trim().toUpperCase()}';
+    await _write(key, jsonMessages);
+  }
+
+  Future<String?> getRoomChatHistory(String roomToken) async {
+    final key = 'sp_chat_hist_${roomToken.trim().toUpperCase()}';
+    return await _read(key);
+  }
+
+  Future<void> deleteRoomChatHistory(String roomToken) async {
+    final key = 'sp_chat_hist_${roomToken.trim().toUpperCase()}';
+    await _delete(key);
+  }
+
   Future<void> revokePairing() async {
     await _delete(AppConstants.keyPeerDeviceId);
     await _delete(AppConstants.keyPeerPublicKey);

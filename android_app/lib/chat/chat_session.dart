@@ -1,16 +1,19 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../cryptography/crypto_service.dart';
 import '../networking/websocket_client.dart';
 import '../security/auto_lock_service.dart';
+import '../security/keystore_service.dart';
 import 'chat_message.dart';
 
 class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
   final CryptoService _cryptoService;
   final SecretPlayWebSocketClient _wsClient;
   final AutoLockService _autoLockService;
+  final KeystoreService _keystore = KeystoreService();
 
   String? _myDeviceId;
   String? _peerDeviceId;
@@ -65,18 +68,51 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
     });
   }
 
-  void switchRoom(String roomToken) {
+  Future<void> switchRoom(String roomToken) async {
     final clean = roomToken.trim().toUpperCase();
     final nextRoom = clean.isEmpty ? 'default' : clean;
-    if (_currentRoomToken == nextRoom) return;
+    if (_currentRoomToken == nextRoom && state.isNotEmpty) return;
+
     _roomHistories[_currentRoomToken] = state;
     _currentRoomToken = nextRoom;
-    state = List<EphemeralChatMessage>.from(_roomHistories[nextRoom] ?? const []);
+
+    var loaded = _roomHistories[nextRoom];
+    if (loaded == null || loaded.isEmpty) {
+      try {
+        final raw = await _keystore.getRoomChatHistory(nextRoom);
+        if (raw != null && raw.isNotEmpty) {
+          final list = jsonDecode(raw) as List<dynamic>;
+          loaded = list
+              .map((e) => EphemeralChatMessage.fromStorageJson(e as Map<String, dynamic>))
+              .toList();
+          _roomHistories[nextRoom] = loaded;
+        }
+      } catch (_) {}
+    }
+
+    state = List<EphemeralChatMessage>.from(loaded ?? const []);
   }
 
   void _setRoomState(List<EphemeralChatMessage> next) {
     state = next;
     _roomHistories[_currentRoomToken] = next;
+    // Persist messages locally unless explicitly deleted by the user (keep up to last 200 per room)
+    try {
+      final toSave = next
+          .where((m) => m.burnAfterSeconds == null && !m.isOneTimeVoice)
+          .toList();
+      final trimmed = toSave.length > 200 ? toSave.sublist(toSave.length - 200) : toSave;
+      _keystore.saveRoomChatHistory(
+        _currentRoomToken,
+        jsonEncode(trimmed.map((m) => m.toStorageJson()).toList()),
+      );
+    } catch (_) {}
+  }
+
+  Future<void> clearCurrentRoomHistoryPermanently() async {
+    state = [];
+    _roomHistories.remove(_currentRoomToken);
+    await _keystore.deleteRoomChatHistory(_currentRoomToken);
   }
 
   void removeMessageById(String msgId) {
