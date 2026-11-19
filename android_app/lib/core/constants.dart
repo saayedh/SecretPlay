@@ -6,9 +6,9 @@ class AppConstants {
   static const String cloudflareHttpBase =
       'https://secretplay-relay.enterprise-config-2026.workers.dev';
 
-  // Network & Session
-  static const int heartbeatIntervalMs = 5000;
-  static const int sessionTimeoutMs = 20000;
+  // Network & Session (Jitter-tolerant for unstable mobile networks)
+  static const int heartbeatIntervalMs = 10000;
+  static const int sessionTimeoutMs = 45000;
   static const int pairingInvitationExpiryMinutes = 5;
 
   // Cryptography

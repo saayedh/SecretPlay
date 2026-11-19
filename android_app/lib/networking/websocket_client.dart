@@ -22,6 +22,7 @@ class SecretPlayWebSocketClient {
   String? _lastUrl;
   bool _manualDisconnect = false;
   Future<void> Function()? _reconnectCallback;
+  final List<String> _pendingOutboundQueue = [];
 
   String? get currentUrl => _lastUrl;
 
@@ -188,6 +189,7 @@ class SecretPlayWebSocketClient {
             _checkAndEmitPeerIdentity(map);
             final peerConnected = map['peerConnected'] == true;
             _setStatus(peerConnected ? ConnectionStatus.peerOnline : ConnectionStatus.authenticated);
+            _flushPendingOutbound();
           } else {
             disconnect();
           }
@@ -250,9 +252,37 @@ class SecretPlayWebSocketClient {
     );
   }
 
+  void _flushPendingOutbound() {
+    if (_channel == null || _pendingOutboundQueue.isEmpty) return;
+    final toSend = List<String>.from(_pendingOutboundQueue);
+    _pendingOutboundQueue.clear();
+    for (final raw in toSend) {
+      try {
+        _channel!.sink.add(raw);
+      } catch (_) {
+        _pendingOutboundQueue.add(raw);
+      }
+    }
+  }
+
   void sendRaw(Map<String, dynamic> payload) {
-    if (_channel != null) {
-      _channel!.sink.add(jsonEncode(payload));
+    final encoded = jsonEncode(payload);
+    final type = payload['type'];
+    final isAuthOrPing = type == 'auth' || type == 'ping';
+    if (_channel != null &&
+        (isAuthOrPing ||
+            _status == ConnectionStatus.authenticated ||
+            _status == ConnectionStatus.peerOnline)) {
+      try {
+        _channel!.sink.add(encoded);
+        return;
+      } catch (_) {}
+    }
+    if (!isAuthOrPing && _pendingOutboundQueue.length < 50) {
+      _pendingOutboundQueue.add(encoded);
+      if (_status == ConnectionStatus.disconnected && !_manualDisconnect) {
+        _reconnectCallback?.call();
+      }
     }
   }
 
@@ -272,7 +302,7 @@ class SecretPlayWebSocketClient {
     _setStatus(ConnectionStatus.disconnected);
     if (!_manualDisconnect && _reconnectCallback != null) {
       _reconnectTimer?.cancel();
-      _reconnectTimer = Timer(const Duration(seconds: 3), () {
+      _reconnectTimer = Timer(const Duration(seconds: 1), () {
         if (!_manualDisconnect && _status == ConnectionStatus.disconnected) {
           _reconnectCallback?.call();
         }
@@ -293,6 +323,7 @@ class SecretPlayWebSocketClient {
     _manualDisconnect = true;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
+    _pendingOutboundQueue.clear();
     _closeSocketOnly();
     _lastUrl = null;
     _sessionEpoch = null;
