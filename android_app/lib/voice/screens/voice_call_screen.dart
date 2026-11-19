@@ -14,6 +14,7 @@ class VoiceCallScreen extends ConsumerStatefulWidget {
   final bool isIncoming;
   final bool isVideoCall;
   final String? initialPeerDeviceId;
+  final String? peerPublicKeyBase64;
   final String? peerDisplayName;
 
   const VoiceCallScreen({
@@ -21,6 +22,7 @@ class VoiceCallScreen extends ConsumerStatefulWidget {
     this.isIncoming = false,
     this.isVideoCall = false,
     this.initialPeerDeviceId,
+    this.peerPublicKeyBase64,
     this.peerDisplayName,
   });
 
@@ -158,7 +160,9 @@ class _VoiceCallScreenState extends ConsumerState<VoiceCallScreen> {
     }
 
     final myPriv = await keystore.getIdentityPrivateKey();
-    final peerPub = await keystore.getPeerPublicKey();
+    final peerPub = (widget.peerPublicKeyBase64 != null && widget.peerPublicKeyBase64!.isNotEmpty)
+        ? widget.peerPublicKeyBase64
+        : await keystore.getPeerPublicKey();
     final keyPair = myPriv != null ? await crypto.reconstructIdentityKeyPair(myPriv) : null;
 
     _voiceService.configureIdentity(

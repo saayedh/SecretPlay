@@ -324,6 +324,7 @@ class WebRtcVoiceService {
     required NetworkMode networkMode,
     bool video = false,
   }) async {
+    _cryptoService.resetInboundSequence();
     _myDeviceId = myDeviceId;
     if (peerDeviceId.isNotEmpty) _peerDeviceId = peerDeviceId;
     _networkMode = networkMode;
@@ -357,6 +358,7 @@ class WebRtcVoiceService {
     required String myDeviceId,
     required NetworkMode networkMode,
   }) async {
+    _cryptoService.resetInboundSequence();
     _myDeviceId = myDeviceId;
     if (peerDeviceId.isNotEmpty && peerDeviceId != 'peer') {
       _peerDeviceId = peerDeviceId;
@@ -577,6 +579,20 @@ class WebRtcVoiceService {
       for (final track in _localStream!.getTracks()) {
         await _peerConnection!.addTrack(track, _localStream!);
       }
+    } else {
+      // Ensure SDP still negotiates receive-only audio/video if local mic/camera is unavailable on desktop
+      try {
+        await _peerConnection!.addTransceiver(
+          kind: RTCRtpMediaType.RTCRtpMediaTypeAudio,
+          init: RTCRtpTransceiverInit(direction: TransceiverDirection.RecvOnly),
+        );
+        if (_isVideoCall) {
+          await _peerConnection!.addTransceiver(
+            kind: RTCRtpMediaType.RTCRtpMediaTypeVideo,
+            init: RTCRtpTransceiverInit(direction: TransceiverDirection.RecvOnly),
+          );
+        }
+      } catch (_) {}
     }
 
     _peerConnection!.onTrack = (RTCTrackEvent event) {

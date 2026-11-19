@@ -58,6 +58,7 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
   String _activeToken = '';
   String? _myDeviceId;
   String? _peerDeviceId;
+  String? _peerPublicKey;
   SimpleKeyPair? _myKeyPair;
   bool _sendNextTextAsFlash = false;
   int? _burnTimerSeconds; // null = Off, or 5, 10, 30 seconds
@@ -165,6 +166,7 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
       }
     }
     _peerDeviceId = peerId;
+    _peerPublicKey = peerPub;
 
     final sessionNotifier = ref.read(chatSessionProvider.notifier);
     if (peerId != null && peerPub != null && peerPub.isNotEmpty) {
@@ -190,6 +192,7 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
       final pKey = peerInfo['peerPublicKey'];
       if (pId != null && pKey != null && _myDeviceId != null && _myKeyPair != null) {
         _peerDeviceId = pId;
+        _peerPublicKey = pKey;
         await keystore.savePairedPeer(
           peerDeviceId: pId,
           peerPublicKeyBase64: pKey,
@@ -282,6 +285,7 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
                   isIncoming: true,
                   isVideoCall: incomingVideo,
                   initialPeerDeviceId: senderId ?? _peerDeviceId,
+                  peerPublicKeyBase64: _peerPublicKey,
                   peerDisplayName: widget.activeContact?.alias,
                 ),
               ),
@@ -383,6 +387,70 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
     });
   }
 
+  Future<void> _sendWithAutoLookup({
+    required String text,
+    ChatContentType contentType = ChatContentType.text,
+    String? mediaBase64,
+    String? stickerId,
+    bool isFlashScreen = false,
+    int? burnAfterSeconds,
+    bool isOneTimeVoice = false,
+    bool isCyberPitch = false,
+    int? voiceDurationSec,
+  }) async {
+    var sent = await ref.read(chatSessionProvider.notifier).sendMessage(
+          text,
+          contentType: contentType,
+          mediaBase64: mediaBase64,
+          stickerId: stickerId,
+          isFlashScreen: isFlashScreen,
+          burnAfterSeconds: burnAfterSeconds,
+          isOneTimeVoice: isOneTimeVoice,
+          isCyberPitch: isCyberPitch,
+          voiceDurationSec: voiceDurationSec,
+        );
+    if (!sent && widget.activeContact != null && _myDeviceId != null && _myKeyPair != null) {
+      final lookedUp = await RelayDirectoryService.lookupBySecretNumber(
+        widget.activeContact!.contactId,
+      );
+      if (lookedUp != null) {
+        _peerDeviceId = lookedUp['deviceId'];
+        _peerPublicKey = lookedUp['publicKey'];
+        ref.read(chatSessionProvider.notifier).initializeSession(
+              myDeviceId: _myDeviceId!,
+              peerDeviceId: lookedUp['deviceId']!,
+              peerPublicKeyBase64: lookedUp['publicKey']!,
+              myIdentityKeyPair: _myKeyPair!,
+            );
+        sent = await ref.read(chatSessionProvider.notifier).sendMessage(
+              text,
+              contentType: contentType,
+              mediaBase64: mediaBase64,
+              stickerId: stickerId,
+              isFlashScreen: isFlashScreen,
+              burnAfterSeconds: burnAfterSeconds,
+              isOneTimeVoice: isOneTimeVoice,
+              isCyberPitch: isCyberPitch,
+              voiceDurationSec: voiceDurationSec,
+            );
+      }
+    }
+    if (!sent && mounted) {
+      final s = S(ref.read(appLocaleProvider));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            s.tr(
+              'مخاطب هنوز یک بار وارد برنامه نشده تا کلید رمزنگاری‌اش ثبت شود. به محض ورود اولش، ارسال آفلاین فعال می‌شود!',
+              'Partner has not opened the app once yet to register their E2EE key.',
+            ),
+          ),
+        ),
+      );
+    }
+    _scrollToBottom();
+  }
+
   Future<void> _sendMessage() async {
     final text = _textController.text;
     if (text.trim().isEmpty) return;
@@ -404,54 +472,17 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
         'timestamp': DateTime.now().millisecondsSinceEpoch,
       });
     }
-    var sent = await ref.read(chatSessionProvider.notifier).sendMessage(
-          text,
-          contentType: ChatContentType.text,
-          isFlashScreen: _sendNextTextAsFlash,
-          burnAfterSeconds: _burnTimerSeconds,
-        );
-    if (!sent && widget.activeContact != null && _myDeviceId != null && _myKeyPair != null) {
-      // Retry directory lookup in case partner just came online or registered!
-      final lookedUp = await RelayDirectoryService.lookupBySecretNumber(
-        widget.activeContact!.contactId,
-      );
-      if (lookedUp != null) {
-        _peerDeviceId = lookedUp['deviceId'];
-        ref.read(chatSessionProvider.notifier).initializeSession(
-              myDeviceId: _myDeviceId!,
-              peerDeviceId: lookedUp['deviceId']!,
-              peerPublicKeyBase64: lookedUp['publicKey']!,
-              myIdentityKeyPair: _myKeyPair!,
-            );
-        sent = await ref.read(chatSessionProvider.notifier).sendMessage(
-              text,
-              contentType: ChatContentType.text,
-              isFlashScreen: _sendNextTextAsFlash,
-              burnAfterSeconds: _burnTimerSeconds,
-            );
-      }
-    }
-    if (!sent) {
-      if (mounted) {
-        final s = S(ref.read(appLocaleProvider));
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              s.tr(
-                'مخاطب هنوز کلید رمزنگاری خود را ثبت نکرده است. به محض اینکه یک بار وارد برنامه شود، کلیدش خودکار دریافت می‌شود!',
-                'Partner has not registered their E2EE key yet. Once they open the app once, messaging will work even offline!',
-              ),
-            ),
-          ),
-        );
-      }
-      return;
-    }
     _textController.clear();
+    final flash = _sendNextTextAsFlash;
     if (_sendNextTextAsFlash) {
       setState(() => _sendNextTextAsFlash = false);
     }
-    _scrollToBottom();
+    await _sendWithAutoLookup(
+      text: text,
+      contentType: ChatContentType.text,
+      isFlashScreen: flash,
+      burnAfterSeconds: _burnTimerSeconds,
+    );
   }
 
   void _cycleBurnTimer() {
@@ -475,19 +506,18 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
       builder: (_) => WalkieTalkieVoiceDialog(isFa: isFa),
     );
     if (res == null) return;
-    await ref.read(chatSessionProvider.notifier).sendMessage(
-          res.caption.isNotEmpty
-              ? res.caption
-              : (isFa ? 'پیام صوتی (${res.durationSec} ثانیه)' : 'Voice Note (${res.durationSec}s)'),
-          contentType: ChatContentType.voice,
-          mediaBase64: res.audioBase64,
-          isFlashScreen: res.flashOnScreen,
-          burnAfterSeconds: _burnTimerSeconds,
-          isOneTimeVoice: res.isOneTimePlay,
-          isCyberPitch: res.isCyberPitch,
-          voiceDurationSec: res.durationSec,
-        );
-    _scrollToBottom();
+    await _sendWithAutoLookup(
+      text: res.caption.isNotEmpty
+          ? res.caption
+          : (isFa ? 'پیام صوتی (${res.durationSec} ثانیه)' : 'Voice Note (${res.durationSec}s)'),
+      contentType: ChatContentType.voice,
+      mediaBase64: res.audioBase64,
+      isFlashScreen: res.flashOnScreen,
+      burnAfterSeconds: _burnTimerSeconds,
+      isOneTimeVoice: res.isOneTimePlay,
+      isCyberPitch: res.isCyberPitch,
+      voiceDurationSec: res.durationSec,
+    );
   }
 
   Future<void> _playVoiceMessage(EphemeralChatMessage msg) async {
@@ -513,13 +543,13 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
       builder: (_) => NeonSketchDialog(isFa: isFa, initialFlash: initialFlash),
     );
     if (res == null) return;
-    await ref.read(chatSessionProvider.notifier).sendMessage(
-          res.caption,
-          contentType: ChatContentType.drawing,
-          mediaBase64: res.pngBase64,
-          isFlashScreen: res.flashOnLockScreen,
-        );
-    _scrollToBottom();
+    await _sendWithAutoLookup(
+      text: res.caption,
+      contentType: ChatContentType.drawing,
+      mediaBase64: res.pngBase64,
+      isFlashScreen: res.flashOnLockScreen,
+      burnAfterSeconds: _burnTimerSeconds,
+    );
   }
 
   Future<void> _openPhotoStudio() async {
@@ -529,13 +559,13 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
       builder: (_) => EncryptedPhotoStudioDialog(isFa: isFa),
     );
     if (res == null) return;
-    await ref.read(chatSessionProvider.notifier).sendMessage(
-          res.caption,
-          contentType: ChatContentType.image,
-          mediaBase64: res.pngBase64,
-          isFlashScreen: res.flashOnScreen,
-        );
-    _scrollToBottom();
+    await _sendWithAutoLookup(
+      text: res.caption,
+      contentType: ChatContentType.image,
+      mediaBase64: res.pngBase64,
+      isFlashScreen: res.flashOnScreen,
+      burnAfterSeconds: _burnTimerSeconds,
+    );
   }
 
   Future<void> _openStickerSheet() async {
@@ -546,13 +576,13 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
       builder: (_) => CyberStickerSheet(isFa: isFa),
     );
     if (res == null) return;
-    await ref.read(chatSessionProvider.notifier).sendMessage(
-          isFa ? res.sticker.titleFa : res.sticker.titleEn,
-          contentType: ChatContentType.sticker,
-          stickerId: res.sticker.id,
-          isFlashScreen: res.flashOnScreen,
-        );
-    _scrollToBottom();
+    await _sendWithAutoLookup(
+      text: isFa ? res.sticker.titleFa : res.sticker.titleEn,
+      contentType: ChatContentType.sticker,
+      stickerId: res.sticker.id,
+      isFlashScreen: res.flashOnScreen,
+      burnAfterSeconds: _burnTimerSeconds,
+    );
   }
 
   void _manualLockAndExit() {
@@ -572,6 +602,7 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
           isIncoming: false,
           isVideoCall: video,
           initialPeerDeviceId: _peerDeviceId,
+          peerPublicKeyBase64: _peerPublicKey,
           peerDisplayName: widget.activeContact?.alias,
         ),
       ),

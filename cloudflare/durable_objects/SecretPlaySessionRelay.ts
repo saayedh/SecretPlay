@@ -183,6 +183,17 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
     } catch {
       // Ignore if columns already exist or in unit test mock SQL storage
     }
+    try {
+      this.ctx.storage.sql.exec(`
+        CREATE TABLE IF NOT EXISTS offline_messages (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          recipient_device_id TEXT NOT NULL,
+          msg_id TEXT NOT NULL,
+          payload_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL
+        );
+      `);
+    } catch {}
   }
 
   private getAdminStub(): DurableObjectStub | null {
@@ -758,7 +769,26 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
     };
     ws.send(JSON.stringify(authRes));
 
-    // Deliver any queued offline E2EE messages waiting for this device and immediately wipe from queue
+    // Deliver any queued offline E2EE messages waiting for this device (from both SQLite & memory) and immediately wipe them
+    try {
+      const sqlRows = [
+        ...this.ctx.storage.sql.exec(
+          `SELECT id, payload_json FROM offline_messages WHERE recipient_device_id = ? ORDER BY id ASC LIMIT 100;`,
+          deviceId
+        ),
+      ] as unknown as { id: number; payload_json: string }[];
+      if (sqlRows.length > 0) {
+        this.ctx.storage.sql.exec(
+          `DELETE FROM offline_messages WHERE recipient_device_id = ?;`,
+          deviceId
+        );
+        for (const row of sqlRows) {
+          try {
+            ws.send(row.payload_json);
+          } catch {}
+        }
+      }
+    } catch {}
     const pendingForDevice = this.offlineQueue.get(deviceId);
     if (pendingForDevice && pendingForDevice.length > 0) {
       this.offlineQueue.delete(deviceId);
@@ -847,10 +877,23 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
             : null) || msg.recipientDeviceId;
       const isTokenRoom = pair && pair.pair_id && pair.pair_id !== 'pair-primary';
       if (isTokenRoom && targetDeviceId && targetDeviceId !== senderDeviceId) {
-        const list = this.offlineQueue.get(targetDeviceId) ?? [];
-        if (list.length < 100) {
-          list.push(msg);
-          this.offlineQueue.set(targetDeviceId, list);
+        let savedToSql = false;
+        try {
+          this.ctx.storage.sql.exec(
+            `INSERT INTO offline_messages (recipient_device_id, msg_id, payload_json, created_at) VALUES (?, ?, ?, ?);`,
+            targetDeviceId,
+            msg.msgId,
+            JSON.stringify(msg),
+            Date.now()
+          );
+          savedToSql = true;
+        } catch {}
+        if (!savedToSql) {
+          const list = this.offlineQueue.get(targetDeviceId) ?? [];
+          if (list.length < 100) {
+            list.push(msg);
+            this.offlineQueue.set(targetDeviceId, list);
+          }
         }
         ws.send(
           JSON.stringify({
