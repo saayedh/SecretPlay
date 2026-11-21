@@ -19,6 +19,9 @@ import android.media.PlaybackParams
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.util.Base64
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
@@ -246,8 +249,59 @@ class MainActivity : FlutterFragmentActivity(), SensorEventListener {
 
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.notify(3001, notification)
+            vibratePattern(longArrayOf(0, 140, 70, 220))
 
             startActivity(fullScreenIntent)
+        } catch (_: Exception) {}
+    }
+
+    private fun vibratePattern(timings: LongArray) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+                vm.defaultVibrator.vibrate(VibrationEffect.createWaveform(timings, -1))
+            } else {
+                @Suppress("DEPRECATION")
+                val v = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    v.vibrate(VibrationEffect.createWaveform(timings, -1))
+                } else {
+                    @Suppress("DEPRECATION")
+                    v.vibrate(timings, -1)
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
+    private fun showDisguisedOnlinePing(title: String, body: String) {
+        try {
+            // Secret signature vibration: tap-tap... buzzz (only your partner recognizes it!)
+            vibratePattern(longArrayOf(0, 110, 80, 110, 260, 220))
+
+            val openIntent = Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            val pendingFlags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            } else {
+                PendingIntent.FLAG_UPDATE_CURRENT
+            }
+            val pi = PendingIntent.getActivity(this, 3009, openIntent, pendingFlags)
+
+            val notification = NotificationCompat.Builder(this, FLASH_CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.star_big_on)
+                .setContentTitle(title)
+                .setContentText(body)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setAutoCancel(true)
+                .setContentIntent(pi)
+                .build()
+
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.notify(3009, notification)
         } catch (_: Exception) {}
     }
 
@@ -313,9 +367,35 @@ class MainActivity : FlutterFragmentActivity(), SensorEventListener {
                     result.success(true)
                 }
                 "startStandbyService" -> {
+                    try {
+                        val intent = Intent(this, StealthStandbyService::class.java).apply {
+                            action = StealthStandbyService.ACTION_START
+                        }
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            startForegroundService(intent)
+                        } else {
+                            startService(intent)
+                        }
+                    } catch (_: Exception) {}
                     result.success(true)
                 }
                 "stopStandbyService" -> {
+                    try {
+                        val intent = Intent(this, StealthStandbyService::class.java).apply {
+                            action = StealthStandbyService.ACTION_STOP
+                        }
+                        startService(intent)
+                    } catch (_: Exception) {}
+                    result.success(true)
+                }
+                "triggerStealthOnlinePing" -> {
+                    val title = call.argument<String>("title") ?: "🎮 Cyber Circuit"
+                    val body = call.argument<String>("body") ?: "جایزه روزانه شما آماده است! 💎"
+                    showDisguisedOnlinePing(title, body)
+                    result.success(true)
+                }
+                "triggerHeartbeatVibration" -> {
+                    vibratePattern(longArrayOf(0, 90, 85, 150))
                     result.success(true)
                 }
                 "startVoiceCallService" -> {

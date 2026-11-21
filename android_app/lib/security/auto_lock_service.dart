@@ -113,6 +113,34 @@ class AutoLockService with WidgetsBindingObserver {
     } catch (_) {}
   }
 
+  /// Sends a 100% disguised innocent game notification + secret signature vibration pattern
+  Future<void> triggerStealthOnlinePing({
+    String title = '🎮 Cyber Circuit',
+    String body = 'جایزه روزانه شما آماده است! 💎',
+  }) async {
+    if (kIsWeb) {
+      HapticFeedback.heavyImpact();
+      return;
+    }
+    try {
+      await _securityChannel.invokeMethod('triggerStealthOnlinePing', {
+        'title': title,
+        'body': body,
+      });
+    } catch (_) {}
+  }
+
+  /// Plays a double-thump heartbeat vibration pattern on Android (or haptic pulse on Web)
+  Future<void> triggerHeartbeatVibration() async {
+    if (kIsWeb) {
+      HapticFeedback.mediumImpact();
+      return;
+    }
+    try {
+      await _securityChannel.invokeMethod('triggerHeartbeatVibration');
+    } catch (_) {}
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);

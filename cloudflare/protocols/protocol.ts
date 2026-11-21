@@ -31,7 +31,9 @@ export type SignalPayloadType =
   | 'answer'
   | 'ice_candidate'
   | 'typing_start'
-  | 'typing_stop';
+  | 'typing_stop'
+  | 'stealth_ping'
+  | 'heartbeat_pulse';
 
 export interface BaseProtocolMessage {
   type: ProtocolMessageType;

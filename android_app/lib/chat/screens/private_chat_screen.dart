@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:cryptography/cryptography.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart' show DateFormat;
+import 'package:permission_handler/permission_handler.dart';
 import '../../core/app_localizations.dart';
 import '../../core/relay_directory_service.dart';
 import '../../core/theme.dart';
@@ -77,6 +79,8 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
   StreamSubscription? _flashSub;
   StreamSubscription? _updateSub;
   bool _isShowingIncomingCall = false;
+  bool _showHeartbeatWave = false;
+  Timer? _heartbeatWaveTimer;
 
   @override
   void initState() {
@@ -99,6 +103,7 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
     _uiCountdownTick?.cancel();
     _peerTypingResetTimer?.cancel();
     _myTypingThrottleTimer?.cancel();
+    _heartbeatWaveTimer?.cancel();
     _statusSub?.cancel();
     _signalSub?.cancel();
     _peerIdSub?.cancel();
@@ -121,6 +126,19 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
   }
 
   Future<void> _setupConnection() async {
+    if (!kIsWeb) {
+      try {
+        final granted = await Permission.notification.isGranted;
+        if (!granted) {
+          AutoLockService().setTransientOverlayActive(true);
+          try {
+            await Permission.notification.request();
+          } finally {
+            AutoLockService().setTransientOverlayActive(false);
+          }
+        }
+      } catch (_) {}
+    }
     final keystore = ref.read(keystoreProvider);
     final wsClient = ref.read(wsClientProvider);
     final crypto = ref.read(cryptoServiceProvider);
@@ -297,6 +315,33 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
         if (_isPeerTyping) {
           setState(() => _isPeerTyping = false);
         }
+        return;
+      } else if (signalType == 'stealth_ping') {
+        AutoLockService().triggerStealthOnlinePing();
+        if (mounted) {
+          final s = S(ref.read(appLocaleProvider));
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                s.tr(
+                  '🤫 پینگ مخفی: مخاطب آنلاین شد و منتظر شماست!',
+                  '🤫 Stealth ping: Partner is online!',
+                ),
+              ),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+        return;
+      } else if (signalType == 'heartbeat_pulse') {
+        AutoLockService().triggerHeartbeatVibration();
+        _heartbeatWaveTimer?.cancel();
+        if (mounted) {
+          setState(() => _showHeartbeatWave = true);
+        }
+        _heartbeatWaveTimer = Timer(const Duration(milliseconds: 2200), () {
+          if (mounted) setState(() => _showHeartbeatWave = false);
+        });
         return;
       }
 
@@ -601,6 +646,75 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
     );
   }
 
+  void _sendStealthOnlinePing() {
+    if (_myDeviceId == null) return;
+    final wsClient = ref.read(wsClientProvider);
+    final rawEpoch = wsClient.sessionEpoch;
+    final epoch = (rawEpoch != null && rawEpoch.isNotEmpty)
+        ? rawEpoch
+        : 'offline-$_activeToken';
+    wsClient.sendRaw({
+      'type': 'signal',
+      'version': 1,
+      'signalType': 'stealth_ping',
+      'senderDeviceId': _myDeviceId,
+      'recipientDeviceId': _peerDeviceId ?? 'peer',
+      'sessionEpoch': epoch,
+      'encryptedPayload': '',
+      'iv': '',
+      'authTag': '',
+      'seq': 0,
+      'timestamp': DateTime.now().millisecondsSinceEpoch,
+    });
+    HapticFeedback.lightImpact();
+    setState(() => _showAttachDock = false);
+    if (mounted) {
+      final s = S(ref.read(appLocaleProvider));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            s.tr(
+              '🤫 پینگ مخفی (با پوشش اعلان بازی) برای مخاطب ارسال شد!',
+              '🤫 Stealth disguised online ping sent to partner!',
+            ),
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  void _sendHeartbeatPulse() {
+    if (_myDeviceId == null) return;
+    final wsClient = ref.read(wsClientProvider);
+    final rawEpoch = wsClient.sessionEpoch;
+    final epoch = (rawEpoch != null && rawEpoch.isNotEmpty)
+        ? rawEpoch
+        : 'offline-$_activeToken';
+    wsClient.sendRaw({
+      'type': 'signal',
+      'version': 1,
+      'signalType': 'heartbeat_pulse',
+      'senderDeviceId': _myDeviceId,
+      'recipientDeviceId': _peerDeviceId ?? 'peer',
+      'sessionEpoch': epoch,
+      'encryptedPayload': '',
+      'iv': '',
+      'authTag': '',
+      'seq': 0,
+      'timestamp': DateTime.now().millisecondsSinceEpoch,
+    });
+    AutoLockService().triggerHeartbeatVibration();
+    _heartbeatWaveTimer?.cancel();
+    setState(() {
+      _showHeartbeatWave = true;
+      _showAttachDock = false;
+    });
+    _heartbeatWaveTimer = Timer(const Duration(milliseconds: 1500), () {
+      if (mounted) setState(() => _showHeartbeatWave = false);
+    });
+  }
+
   Future<void> _openPhotoStudio() async {
     setState(() => _showAttachDock = false);
     final isFa = ref.read(appLocaleProvider) == AppLang.fa;
@@ -852,6 +966,11 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
                     ),
                     actions: [
                       IconButton(
+                        icon: const Icon(Icons.radar_rounded, color: Color(0xFFFFD60A)),
+                        tooltip: s.tr('پینگ مخفی (من آنلاینم)', 'Stealth Ping (I am Online)'),
+                        onPressed: _sendStealthOnlinePing,
+                      ),
+                      IconButton(
                         icon: const Icon(Icons.call_rounded, color: Color(0xFF00FFA3)),
                         tooltip: s.tr('تماس صوتی', 'Voice Call'),
                         onPressed: _connectionStatus == ConnectionStatus.peerOnline
@@ -1101,6 +1220,31 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
                                   });
                                 },
                               ),
+                              _buildAttachTile(
+                                icon: Icons.radar_rounded,
+                                label: s.tr('پینگ مخفی', 'Stealth Ping'),
+                                color: const Color(0xFFFFD60A),
+                                onTap: _sendStealthOnlinePing,
+                              ),
+                              _buildAttachTile(
+                                icon: Icons.favorite_rounded,
+                                label: s.tr('تپش قلب', 'Heartbeat'),
+                                color: const Color(0xFFFF2A85),
+                                onTap: _sendHeartbeatPulse,
+                              ),
+                              _buildAttachTile(
+                                icon: Icons.visibility_off_rounded,
+                                label: s.tr('فلش محو ۵s', '5s Vanish'),
+                                color: const Color(0xFF38BDF8),
+                                active: _sendNextTextAsFlash && _burnTimerSeconds == 5,
+                                onTap: () {
+                                  setState(() {
+                                    _sendNextTextAsFlash = true;
+                                    _burnTimerSeconds = 5;
+                                    _showAttachDock = false;
+                                  });
+                                },
+                              ),
                             ],
                           ),
                         ),
@@ -1222,6 +1366,60 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
                       isFa: s.isFa,
                       onDismiss: () => setState(() => _activeFlashHologram = null),
                       onQuickReplySketch: () => _openSketchPad(initialFlash: true),
+                    ),
+                  ),
+
+                if (_showHeartbeatWave)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: Center(
+                        child: AnimatedScale(
+                          scale: _showHeartbeatWave ? 1.1 : 0.6,
+                          duration: const Duration(milliseconds: 350),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 20),
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              gradient: RadialGradient(
+                                colors: [
+                                  const Color(0xFFFF007A).withOpacity(0.55),
+                                  const Color(0xFFFF007A).withOpacity(0.12),
+                                  Colors.transparent,
+                                ],
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: const Color(0xFFFF2A85).withOpacity(0.55),
+                                  blurRadius: 48,
+                                  spreadRadius: 12,
+                                ),
+                              ],
+                            ),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(
+                                  Icons.favorite_rounded,
+                                  color: Color(0xFFFF2A85),
+                                  size: 84,
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  s.tr('❤️‍🔥 تپش قلب زنده', '❤️‍🔥 Live Heartbeat'),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.bold,
+                                    shadows: [
+                                      Shadow(color: Colors.black, blurRadius: 8),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
                     ),
                   ),
               ],

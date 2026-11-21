@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../chat_message.dart';
@@ -8,6 +9,7 @@ class FlashHologramOverlay extends StatefulWidget {
   final bool isFa;
   final VoidCallback onDismiss;
   final VoidCallback? onQuickReplySketch;
+  final int autoVanishSeconds;
 
   const FlashHologramOverlay({
     super.key,
@@ -15,6 +17,7 @@ class FlashHologramOverlay extends StatefulWidget {
     required this.isFa,
     required this.onDismiss,
     this.onQuickReplySketch,
+    this.autoVanishSeconds = 7,
   });
 
   @override
@@ -24,18 +27,41 @@ class FlashHologramOverlay extends StatefulWidget {
 class _FlashHologramOverlayState extends State<FlashHologramOverlay>
     with SingleTickerProviderStateMixin {
   late AnimationController _pulseController;
+  Timer? _vanishTimer;
+  late int _remainingSec;
+  bool _timerPaused = false;
 
   @override
   void initState() {
     super.initState();
+    _remainingSec = widget.autoVanishSeconds;
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1100),
     )..repeat(reverse: true);
+    _startVanishCountdown();
+  }
+
+  void _startVanishCountdown() {
+    _vanishTimer?.cancel();
+    _vanishTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) {
+        t.cancel();
+        return;
+      }
+      if (_timerPaused) return;
+      if (_remainingSec <= 1) {
+        t.cancel();
+        widget.onDismiss();
+      } else {
+        setState(() => _remainingSec--);
+      }
+    });
   }
 
   @override
   void dispose() {
+    _vanishTimer?.cancel();
     _pulseController.dispose();
     super.dispose();
   }
@@ -96,18 +122,37 @@ class _FlashHologramOverlayState extends State<FlashHologramOverlay>
                         const SizedBox(width: 6),
                         Text(
                           isFa
-                              ? 'پیام هولوگرافیک زنده روی صفحه!'
-                              : 'LIVE HOLOGRAM FLASH RECEIVED!',
+                              ? 'محو خودکار در $_remainingSec ثانیه'
+                              : 'AUTO-VANISH IN ${_remainingSec}S',
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 12,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
+                        const SizedBox(width: 8),
+                        GestureDetector(
+                          onTap: () => setState(() => _timerPaused = !_timerPaused),
+                          child: Icon(
+                            _timerPaused ? Icons.play_arrow_rounded : Icons.pause_rounded,
+                            color: Colors.white70,
+                            size: 16,
+                          ),
+                        ),
                       ],
                     ),
                   ),
-                  const SizedBox(height: 18),
+                  const SizedBox(height: 10),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(99),
+                    child: LinearProgressIndicator(
+                      value: (_remainingSec / widget.autoVanishSeconds).clamp(0.0, 1.0),
+                      minHeight: 4,
+                      backgroundColor: Colors.white12,
+                      color: accentColor,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
 
                   // Rich Visual Content (Sticker / Drawing / Photo / Text)
                   if (msg.contentType == ChatContentType.sticker && sticker != null) ...[
