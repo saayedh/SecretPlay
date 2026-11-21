@@ -198,6 +198,45 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
         `CREATE UNIQUE INDEX IF NOT EXISTS idx_offline_msg_unique ON offline_messages(recipient_device_id, msg_id);`
       );
     } catch {}
+    try {
+      this.ctx.storage.sql.exec(`
+        CREATE TABLE IF NOT EXISTS inbox_events (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          event_id TEXT UNIQUE,
+          payload_json TEXT NOT NULL,
+          created_at INTEGER NOT NULL
+        );
+      `);
+    } catch {}
+  }
+
+  private pushToDeviceInbox(
+    targetDeviceId: string | null | undefined,
+    event: Record<string, unknown>
+  ): void {
+    try {
+      if (
+        !targetDeviceId ||
+        targetDeviceId === 'peer' ||
+        !this.env?.SESSION_RELAY ||
+        typeof this.env.SESSION_RELAY.idFromName !== 'function'
+      ) {
+        return;
+      }
+      const id = this.env.SESSION_RELAY.idFromName(`inbox:${targetDeviceId}`);
+      const stub = this.env.SESSION_RELAY.get(id);
+      if (stub && (stub as unknown) !== (this as unknown)) {
+        stub
+          .fetch(
+            new Request('https://internal/internal-inbox/push', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ recipientDeviceId: targetDeviceId, ...event }),
+            })
+          )
+          .catch(() => {});
+      }
+    } catch {}
   }
 
   private getAdminStub(): DurableObjectStub | null {
@@ -432,6 +471,90 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
     // Internal Admin Registry & Room Control Endpoints
     if (url.pathname.startsWith('/internal-admin/')) {
       return await this.handleInternalAdminRequest(request, url);
+    }
+
+    // Personal Device Inbox Push (disguised background notifications, floating heartbeats & holograms)
+    if (url.pathname === '/internal-inbox/push' && request.method === 'POST') {
+      const now = Date.now();
+      const body = (await request.json()) as Record<string, unknown>;
+      const envelope = {
+        type: 'inbox_event',
+        version: 1,
+        eventId:
+          typeof body.eventId === 'string' && body.eventId.length > 0
+            ? body.eventId
+            : crypto.randomUUID(),
+        eventType: typeof body.eventType === 'string' ? body.eventType : 'new_msg',
+        senderDeviceId: typeof body.senderDeviceId === 'string' ? body.senderDeviceId : '',
+        title: typeof body.title === 'string' ? body.title : '',
+        body: typeof body.body === 'string' ? body.body : '',
+        emoji: typeof body.emoji === 'string' ? body.emoji : '',
+        colorHex: typeof body.colorHex === 'string' ? body.colorHex : '#FF007A',
+        mediaBase64: typeof body.mediaBase64 === 'string' ? body.mediaBase64 : '',
+        flashSeconds: typeof body.flashSeconds === 'number' ? body.flashSeconds : 7,
+        roomToken: typeof body.roomToken === 'string' ? body.roomToken : '',
+        timestamp: now,
+      };
+      const serialized = JSON.stringify(envelope);
+      let delivered = 0;
+      let sockets: WebSocket[] = [];
+      try {
+        sockets = this.ctx.getWebSockets('inbox');
+      } catch {}
+      for (const sock of sockets) {
+        try {
+          sock.send(serialized);
+          delivered++;
+        } catch {}
+      }
+      if (delivered === 0) {
+        try {
+          this.ctx.storage.sql.exec(
+            `DELETE FROM inbox_events WHERE created_at < ?;`,
+            now - 43_200_000
+          );
+          this.ctx.storage.sql.exec(
+            `DELETE FROM inbox_events WHERE id NOT IN (SELECT id FROM inbox_events ORDER BY id DESC LIMIT 29);`
+          );
+          this.ctx.storage.sql.exec(
+            `INSERT OR IGNORE INTO inbox_events (event_id, payload_json, created_at) VALUES (?, ?, ?);`,
+            envelope.eventId,
+            serialized,
+            now
+          );
+        } catch {}
+      }
+      return Response.json({ ok: true, delivered, queued: delivered === 0 });
+    }
+
+    // Personal Device Inbox 24/7 WebSocket Upgrade
+    if (
+      url.pathname === '/inbox-ws' &&
+      request.headers.get('Upgrade')?.toLowerCase() === 'websocket'
+    ) {
+      const now = Date.now();
+      const pair = new WebSocketPair();
+      const [client, server] = Object.values(pair);
+      this.ctx.acceptWebSocket(server, ['inbox']);
+      try {
+        server.send(JSON.stringify({ type: 'inbox_ready', version: 1, timestamp: now }));
+        const rows = [
+          ...this.ctx.storage.sql.exec(
+            `SELECT id, payload_json FROM inbox_events WHERE created_at > ? ORDER BY id ASC LIMIT 30;`,
+            now - 43_200_000
+          ),
+        ] as unknown as { id: number; payload_json: string }[];
+        if (rows.length > 0) {
+          const maxId = rows[rows.length - 1].id;
+          for (const row of rows) {
+            try {
+              server.send(row.payload_json);
+            } catch {}
+          }
+          this.ctx.storage.sql.exec(`DELETE FROM inbox_events WHERE id <= ?;`, maxId);
+        }
+      } catch {}
+      return new Response(null, { status: 101, webSocket: client });
     }
 
     // WebSocket upgrade
@@ -913,6 +1036,12 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
             timestamp: Date.now(),
           })
         );
+        this.pushToDeviceInbox(targetDeviceId, {
+          eventId: `msg:${msg.msgId}`,
+          eventType: 'new_msg',
+          senderDeviceId,
+          roomToken: pair?.pair_id || '',
+        });
         return;
       }
 
@@ -1067,6 +1196,27 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
             )
             .catch(() => {});
         }
+      }
+    }
+    if (
+      isTokenRoom &&
+      (signal.signalType === 'call_request' ||
+        signal.signalType === 'stealth_ping' ||
+        signal.signalType === 'heartbeat_pulse')
+    ) {
+      const targetDeviceId =
+        (pair && pair.device_a_id === senderDeviceId
+          ? pair.device_b_id
+          : pair && pair.device_b_id === senderDeviceId
+            ? pair.device_a_id
+            : null) || signal.recipientDeviceId;
+      if (targetDeviceId && targetDeviceId !== senderDeviceId && targetDeviceId !== 'peer') {
+        this.pushToDeviceInbox(targetDeviceId, {
+          eventId: `${signal.signalType}:${senderDeviceId}:${signal.timestamp}`,
+          eventType: signal.signalType === 'call_request' ? 'incoming_call' : signal.signalType,
+          senderDeviceId,
+          roomToken: pair?.pair_id || '',
+        });
       }
     }
   }
@@ -1448,14 +1598,14 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
       const existing = [...cur] as unknown as AdminDeviceRow[];
 
       const latestUpdate = {
-        latestVersion: cfg.latest_version || '1.3.0',
-        latestBuild: cfg.latest_build || 3,
+        latestVersion: cfg.latest_version || '1.6.0',
+        latestBuild: cfg.latest_build || 7,
         downloadUrl:
           cfg.download_url ||
           'https://github.com/saayedh/SecretPlay/releases/download/v1.0.0/app-arm64-v8a-release.apk',
         releaseNotes:
           cfg.release_notes ||
-          'نسخه جدید SecretPlay با پایداری کامل چت، دانلود مستقیم آپدیت و تماس پایدار آماده است!',
+          'نسخه جدید SecretPlay با سرویس پس‌زمینه ۲۴ ساعته، نمایش شناور قلبک و نقاشی روی همه برنامه‌ها و صفحه قفل آماده است!',
       };
 
       if (existing.length === 0) {
@@ -1560,14 +1710,14 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
     if (path === '/internal-admin/version' && request.method === 'GET') {
       const cfg = this.getAdminConfig();
       return Response.json({
-        latestVersion: cfg.latest_version || '1.3.0',
-        latestBuild: cfg.latest_build || 3,
+        latestVersion: cfg.latest_version || '1.6.0',
+        latestBuild: cfg.latest_build || 7,
         downloadUrl:
           cfg.download_url ||
           'https://github.com/saayedh/SecretPlay/releases/download/v1.0.0/app-arm64-v8a-release.apk',
         releaseNotes:
           cfg.release_notes ||
-          'نسخه جدید SecretPlay با پایداری کامل چت، دانلود مستقیم آپدیت و تماس پایدار آماده است!',
+          'نسخه جدید SecretPlay با سرویس پس‌زمینه ۲۴ ساعته، نمایش شناور قلبک و نقاشی روی همه برنامه‌ها و صفحه قفل آماده است!',
         timestamp: now,
       });
     }

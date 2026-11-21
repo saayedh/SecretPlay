@@ -64,6 +64,39 @@ class RelayDirectoryService {
     return null;
   }
 
+  /// Sends an out-of-band push event to a partner's 24/7 Personal Device Inbox DO (/inbox/push)
+  /// so heartbeats, disguised online pings, and lock-screen holograms arrive outside the chat screen.
+  static Future<bool> pushInboxEvent({
+    required String recipientDeviceId,
+    required String senderDeviceId,
+    required String eventType,
+    String? title,
+    String? body,
+    String? emoji,
+    String? colorHex,
+    String? mediaBase64,
+    int flashSeconds = 7,
+    String? roomToken,
+  }) async {
+    final target = recipientDeviceId.trim();
+    if (target.isEmpty || target == 'peer') return false;
+    final payload = <String, dynamic>{
+      'recipientDeviceId': target,
+      'senderDeviceId': senderDeviceId,
+      'eventType': eventType,
+      if (title != null && title.isNotEmpty) 'title': title,
+      if (body != null && body.isNotEmpty) 'body': body,
+      if (emoji != null && emoji.isNotEmpty) 'emoji': emoji,
+      if (colorHex != null && colorHex.isNotEmpty) 'colorHex': colorHex,
+      if (mediaBase64 != null && mediaBase64.isNotEmpty && mediaBase64.length <= 350000)
+        'mediaBase64': mediaBase64,
+      'flashSeconds': flashSeconds,
+      if (roomToken != null && roomToken.isNotEmpty) 'roomToken': roomToken,
+    };
+    final res = await relayHttpPost('${AppConstants.cloudflareHttpBase}/inbox/push', payload);
+    return res != null;
+  }
+
   /// Checks Cloudflare /version for newer app updates
   static Future<AppUpdateInfo?> checkForUpdate({bool forceShowIfCurrent = false}) async {
     final raw = await relayHttpGet('${AppConstants.cloudflareHttpBase}/version');

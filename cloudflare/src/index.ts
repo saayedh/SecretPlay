@@ -154,6 +154,50 @@ export default {
       return stub.fetch(request);
     }
 
+    // Personal per-device WebSocket inbox for 24/7 background notifications, floating heartbeats & holograms
+    if (url.pathname === '/inbox-ws') {
+      const deviceId = url.searchParams.get('deviceId')?.trim();
+      if (!deviceId) {
+        return new Response('Missing deviceId', { status: 400 });
+      }
+      const id = env.SESSION_RELAY.idFromName(`inbox:${deviceId}`);
+      const stub = env.SESSION_RELAY.get(id);
+      return stub.fetch(request);
+    }
+
+    // Push a disguised notification / floating heartbeat / lock-screen hologram to a specific device inbox
+    if (url.pathname === '/inbox/push' && request.method === 'POST') {
+      try {
+        const body = (await request.json()) as Record<string, unknown>;
+        const recipientDeviceId =
+          typeof body.recipientDeviceId === 'string' ? body.recipientDeviceId.trim() : '';
+        if (!recipientDeviceId) {
+          return Response.json(
+            { ok: false, error: 'Missing recipientDeviceId' },
+            { status: 400, headers: { 'Access-Control-Allow-Origin': '*' } }
+          );
+        }
+        const id = env.SESSION_RELAY.idFromName(`inbox:${recipientDeviceId}`);
+        const stub = env.SESSION_RELAY.get(id);
+        const res = await stub.fetch(
+          new Request('https://internal/internal-inbox/push', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          })
+        );
+        const data = await res.json();
+        return Response.json(data, {
+          headers: { 'Access-Control-Allow-Origin': '*' },
+        });
+      } catch {
+        return Response.json(
+          { ok: false, error: 'Invalid inbox push payload' },
+          { status: 400, headers: { 'Access-Control-Allow-Origin': '*' } }
+        );
+      }
+    }
+
     // Optional ephemeral TURN credentials endpoint (Free tier / disabled by default)
     if (url.pathname === '/turn') {
       if (env.ENABLE_CLOUDFLARE_TURN !== 'true' || !env.CF_TURN_KEY_ID || !env.CF_TURN_API_TOKEN) {

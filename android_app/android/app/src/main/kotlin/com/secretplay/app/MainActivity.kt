@@ -22,6 +22,7 @@ import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.provider.Settings
 import android.util.Base64
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
@@ -397,6 +398,87 @@ class MainActivity : FlutterFragmentActivity(), SensorEventListener {
                 "triggerHeartbeatVibration" -> {
                     vibratePattern(longArrayOf(0, 90, 85, 150))
                     result.success(true)
+                }
+                "configureStandbyEngine" -> {
+                    val devId = call.argument<String>("deviceId") ?: ""
+                    val wsBase = call.argument<String>("wsBase") ?: StealthStandbyService.DEFAULT_WS_BASE
+                    if (devId.isNotEmpty()) {
+                        getSharedPreferences(StealthStandbyService.PREFS_NAME, Context.MODE_PRIVATE)
+                            .edit()
+                            .putString(StealthStandbyService.KEY_DEVICE_ID, devId)
+                            .putString(StealthStandbyService.KEY_WS_BASE, wsBase)
+                            .apply()
+                        try {
+                            val svcIntent = Intent(this, StealthStandbyService::class.java).apply {
+                                action = StealthStandbyService.ACTION_START
+                            }
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                startForegroundService(svcIntent)
+                            } else {
+                                startService(svcIntent)
+                            }
+                        } catch (_: Exception) {}
+                    }
+                    result.success(true)
+                }
+                "checkOverlayAndBatteryStatus" -> {
+                    val canDraw = NativeOverlayRenderer.canDraw(this)
+                    val ignoringBattery = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+                        pm.isIgnoringBatteryOptimizations(packageName)
+                    } else {
+                        true
+                    }
+                    result.success(
+                        mapOf(
+                            "canDrawOverlays" to canDraw,
+                            "ignoringBatteryOptimizations" to ignoringBattery
+                        )
+                    )
+                }
+                "requestOverlayPermission" -> {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+                        try {
+                            val intent = Intent(
+                                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                Uri.parse("package:$packageName")
+                            ).apply {
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            startActivity(intent)
+                        } catch (_: Exception) {}
+                    }
+                    result.success(true)
+                }
+                "requestIgnoreBatteryOptimizations" -> {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+                        if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+                            try {
+                                val intent = Intent(
+                                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                    Uri.parse("package:$packageName")
+                                ).apply {
+                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                }
+                                startActivity(intent)
+                            } catch (_: Exception) {
+                                try {
+                                    startActivity(
+                                        Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
+                                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        }
+                                    )
+                                } catch (_: Exception) {}
+                            }
+                        }
+                    }
+                    result.success(true)
+                }
+                "testOverlayHeartbeat" -> {
+                    vibratePattern(longArrayOf(0, 90, 80, 150, 260, 90, 80, 150))
+                    val drawn = NativeOverlayRenderer.showFloatingHeartbeat(this)
+                    result.success(drawn)
                 }
                 "startVoiceCallService" -> {
                     requestCallAudioFocus()

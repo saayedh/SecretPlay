@@ -1,7 +1,9 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../../core/app_localizations.dart';
 import '../../core/relay_directory_service.dart';
@@ -23,28 +25,111 @@ class ContactsScreen extends ConsumerStatefulWidget {
   ConsumerState<ContactsScreen> createState() => _ContactsScreenState();
 }
 
-class _ContactsScreenState extends ConsumerState<ContactsScreen> {
+class _ContactsScreenState extends ConsumerState<ContactsScreen> with WidgetsBindingObserver {
   final KeystoreService _keystore = KeystoreService();
   final CryptoService _crypto = CryptoService();
   final TextEditingController _searchOrAddIdController = TextEditingController();
   final TextEditingController _aliasController = TextEditingController();
 
+  String _myDeviceId = '';
   String _mySecretNumber = '';
   String _myPublicKey = '';
   List<SecretContact> _contacts = [];
   bool _isLoading = true;
+  bool _canDrawOverlays = true;
+  bool _ignoringBattery = true;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initMyIdentityAndContacts();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _searchOrAddIdController.dispose();
     _aliasController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _refreshOverlayAndBatteryStatus();
+    }
+  }
+
+  Future<void> _refreshOverlayAndBatteryStatus() async {
+    if (kIsWeb) return;
+    final st = await AutoLockService().checkOverlayAndBatteryStatus();
+    if (mounted) {
+      setState(() {
+        _canDrawOverlays = st['canDrawOverlays'] == true;
+        _ignoringBattery = st['ignoringBatteryOptimizations'] == true;
+      });
+    }
+  }
+
+  Future<void> _sendQuickContactPush(SecretContact contact, String eventType) async {
+    String? targetDeviceId = contact.peerDeviceId;
+    if (targetDeviceId == null || targetDeviceId.isEmpty) {
+      final found = await RelayDirectoryService.lookupBySecretNumber(contact.contactId);
+      if (found != null) {
+        targetDeviceId = found['deviceId'];
+        final idx = _contacts.indexWhere((c) => c.contactId == contact.contactId);
+        if (idx >= 0) {
+          _contacts[idx] = _contacts[idx].copyWith(
+            peerDeviceId: targetDeviceId,
+            peerPublicKey: found['publicKey'] ?? _contacts[idx].peerPublicKey,
+          );
+          await _persistContacts(_contacts);
+        }
+      }
+    }
+    if (!mounted) return;
+    final s = S(ref.read(appLocaleProvider));
+    if (targetDeviceId == null || targetDeviceId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            s.tr(
+              'مخاطب هنوز یک بار وارد برنامه نشده است!',
+              'Partner has not opened the app once yet.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    final ok = await RelayDirectoryService.pushInboxEvent(
+      recipientDeviceId: targetDeviceId,
+      senderDeviceId: _myDeviceId,
+      eventType: eventType,
+      roomToken: contact.roomToken,
+    );
+    HapticFeedback.mediumImpact();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          content: Text(
+            ok
+                ? (eventType == 'heartbeat_pulse'
+                    ? s.tr(
+                        '❤️‍🔥 تپش قلب زنده به صفحه ${contact.alias} ارسال شد!',
+                        '❤️‍🔥 Heartbeat pushed to ${contact.alias}!',
+                      )
+                    : s.tr(
+                        '🤫 پینگ مخفی «من آنلاینم» به ${contact.alias} ارسال شد!',
+                        '🤫 Stealth online ping pushed to ${contact.alias}!',
+                      ))
+                : s.tr('خطا در ارسال اعلان', 'Failed to push alert'),
+          ),
+        ),
+      );
+    }
   }
 
   Future<void> _initMyIdentityAndContacts() async {
@@ -131,11 +216,27 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
 
     if (mounted) {
       setState(() {
+        _myDeviceId = deviceId;
         _mySecretNumber = myNumber!;
         _myPublicKey = pubKey!;
         _contacts = loaded;
         _isLoading = false;
       });
+    }
+
+    if (!kIsWeb) {
+      await AutoLockService().configureNativeStandbyEngine(deviceId: deviceId);
+      try {
+        if (!(await Permission.notification.isGranted)) {
+          AutoLockService().setTransientOverlayActive(true);
+          try {
+            await Permission.notification.request();
+          } finally {
+            AutoLockService().setTransientOverlayActive(false);
+          }
+        }
+      } catch (_) {}
+      await _refreshOverlayAndBatteryStatus();
     }
 
     await RelayDirectoryService.registerIdentity(
@@ -656,6 +757,123 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
                       ),
                     ),
 
+                    // Native Out-of-App Floating Overlay & 24/7 Background Delivery Banner (Android)
+                    if (!kIsWeb && (!_canDrawOverlays || !_ignoringBattery))
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                        child: Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                              colors: [Color(0xFF281229), Color(0xFF17132B)],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                              color: const Color(0xFFFF007A).withOpacity(0.55),
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  const Icon(Icons.layers_rounded,
+                                      color: Color(0xFFFF007A), size: 18),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      s.tr(
+                                        '⚡ نمایش قلبک، نقاشی و اعلانات بیرون از برنامه و صفحه قفل',
+                                        '⚡ Show Floating Heartbeats & Sketches Outside App',
+                                      ),
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 6,
+                                children: [
+                                  if (!_canDrawOverlays)
+                                    ElevatedButton.icon(
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: const Color(0xFFFF007A),
+                                        foregroundColor: Colors.white,
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 10, vertical: 6),
+                                        minimumSize: Size.zero,
+                                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                      ),
+                                      icon: const Icon(Icons.picture_in_picture_alt_rounded,
+                                          size: 14),
+                                      label: Text(
+                                        s.tr('نمایش روی همه برنامه‌ها', 'Allow Overlay'),
+                                        style: const TextStyle(fontSize: 11),
+                                      ),
+                                      onPressed: () =>
+                                          AutoLockService().requestOverlayPermission(),
+                                    ),
+                                  if (!_ignoringBattery)
+                                    ElevatedButton.icon(
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: const Color(0xFF00FFA3),
+                                        foregroundColor: Colors.black,
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 10, vertical: 6),
+                                        minimumSize: Size.zero,
+                                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                      ),
+                                      icon: const Icon(Icons.battery_charging_full_rounded,
+                                          size: 14),
+                                      label: Text(
+                                        s.tr('اجرای دائم پس‌زمینه', '24/7 Background'),
+                                        style: const TextStyle(fontSize: 11),
+                                      ),
+                                      onPressed: () => AutoLockService()
+                                          .requestIgnoreBatteryOptimizations(),
+                                    ),
+                                  OutlinedButton(
+                                    style: OutlinedButton.styleFrom(
+                                      side: const BorderSide(color: Color(0xFF00E5FF)),
+                                      foregroundColor: const Color(0xFF00E5FF),
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 10, vertical: 6),
+                                      minimumSize: Size.zero,
+                                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                    ),
+                                    onPressed: () async {
+                                      final messenger = ScaffoldMessenger.of(context);
+                                      final ok =
+                                          await AutoLockService().testOverlayHeartbeat();
+                                      if (!ok && mounted) {
+                                        messenger.showSnackBar(
+                                          SnackBar(
+                                            content: Text(s.tr(
+                                              'ابتدا مجوز «نمایش روی همه برنامه‌ها» را فعال کنید.',
+                                              'Enable Overlay permission first.',
+                                            )),
+                                          ),
+                                        );
+                                      }
+                                    },
+                                    child: const Text('تست ❤️‍🔥',
+                                        style: TextStyle(fontSize: 11)),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+
                     // Direct Dial / Search Input
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -823,10 +1041,41 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
                                             ),
                                           ),
                                           IconButton(
+                                            visualDensity: VisualDensity.compact,
+                                            padding: EdgeInsets.zero,
+                                            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                                            icon: const Icon(
+                                              Icons.favorite_rounded,
+                                              color: Color(0xFFFF2A85),
+                                              size: 19,
+                                            ),
+                                            tooltip: s.tr('ارسال تپش قلب بیرون/داخل برنامه',
+                                                'Send Heartbeat'),
+                                            onPressed: () => _sendQuickContactPush(
+                                                contact, 'heartbeat_pulse'),
+                                          ),
+                                          IconButton(
+                                            visualDensity: VisualDensity.compact,
+                                            padding: EdgeInsets.zero,
+                                            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                                            icon: const Icon(
+                                              Icons.radar_rounded,
+                                              color: Color(0xFFFFD60A),
+                                              size: 19,
+                                            ),
+                                            tooltip:
+                                                s.tr('پینگ مخفی من آنلاینم', 'Stealth Ping'),
+                                            onPressed: () =>
+                                                _sendQuickContactPush(contact, 'stealth_ping'),
+                                          ),
+                                          IconButton(
+                                            visualDensity: VisualDensity.compact,
+                                            padding: EdgeInsets.zero,
+                                            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                                             icon: const Icon(
                                               Icons.delete_outline_rounded,
                                               color: Colors.white30,
-                                              size: 20,
+                                              size: 19,
                                             ),
                                             onPressed: () => _deleteContact(contact),
                                           ),

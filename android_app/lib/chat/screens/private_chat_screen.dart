@@ -538,7 +538,61 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
         SnackBar(content: Text(msgText)),
       );
     }
+    if (sent && isFlashScreen && _myDeviceId != null) {
+      final targetId = await _resolvePeerDeviceId();
+      if (targetId != null) {
+        final st = contentType == ChatContentType.sticker
+            ? CyberStickerCatalog.findById(stickerId)
+            : null;
+        final colorHex = st != null
+            ? '#${(st.neonColor.value & 0xFFFFFF).toRadixString(16).padLeft(6, '0').toUpperCase()}'
+            : '#FF007A';
+        unawaited(RelayDirectoryService.pushInboxEvent(
+          recipientDeviceId: targetId,
+          senderDeviceId: _myDeviceId!,
+          eventType: 'flash_hologram',
+          emoji: st?.emoji,
+          title: st != null ? st.titleFa : '⚡ پیام هولوگرافیک فوری',
+          body: text,
+          colorHex: colorHex,
+          mediaBase64: (contentType == ChatContentType.drawing ||
+                  contentType == ChatContentType.image)
+              ? mediaBase64
+              : null,
+          flashSeconds: 7,
+          roomToken: _activeToken,
+        ));
+      }
+    }
     _scrollToBottom();
+  }
+
+  Future<String?> _resolvePeerDeviceId() async {
+    if (_peerDeviceId != null && _peerDeviceId!.isNotEmpty && _peerDeviceId != 'peer') {
+      return _peerDeviceId;
+    }
+    if (widget.activeContact != null) {
+      final lookedUp = await RelayDirectoryService.lookupBySecretNumber(
+        widget.activeContact!.contactId,
+      );
+      if (lookedUp != null) {
+        _peerDeviceId = lookedUp['deviceId'];
+        if ((_peerPublicKey == null || _peerPublicKey!.isEmpty) &&
+            lookedUp['publicKey'] != null) {
+          _peerPublicKey = lookedUp['publicKey'];
+          if (_myDeviceId != null && _myKeyPair != null) {
+            ref.read(chatSessionProvider.notifier).initializeSession(
+                  myDeviceId: _myDeviceId!,
+                  peerDeviceId: lookedUp['deviceId']!,
+                  peerPublicKeyBase64: lookedUp['publicKey']!,
+                  myIdentityKeyPair: _myKeyPair!,
+                );
+          }
+        }
+        return _peerDeviceId;
+      }
+    }
+    return null;
   }
 
   Future<void> _sendMessage() async {
@@ -646,8 +700,9 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
     );
   }
 
-  void _sendStealthOnlinePing() {
+  Future<void> _sendStealthOnlinePing() async {
     if (_myDeviceId == null) return;
+    final peerId = await _resolvePeerDeviceId();
     final wsClient = ref.read(wsClientProvider);
     final rawEpoch = wsClient.sessionEpoch;
     final epoch = (rawEpoch != null && rawEpoch.isNotEmpty)
@@ -658,7 +713,7 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
       'version': 1,
       'signalType': 'stealth_ping',
       'senderDeviceId': _myDeviceId,
-      'recipientDeviceId': _peerDeviceId ?? 'peer',
+      'recipientDeviceId': peerId ?? _peerDeviceId ?? 'peer',
       'sessionEpoch': epoch,
       'encryptedPayload': '',
       'iv': '',
@@ -666,16 +721,24 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
       'seq': 0,
       'timestamp': DateTime.now().millisecondsSinceEpoch,
     });
+    if (peerId != null) {
+      unawaited(RelayDirectoryService.pushInboxEvent(
+        recipientDeviceId: peerId,
+        senderDeviceId: _myDeviceId!,
+        eventType: 'stealth_ping',
+        roomToken: _activeToken,
+      ));
+    }
     HapticFeedback.lightImpact();
-    setState(() => _showAttachDock = false);
     if (mounted) {
+      setState(() => _showAttachDock = false);
       final s = S(ref.read(appLocaleProvider));
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
             s.tr(
-              '🤫 پینگ مخفی (با پوشش اعلان بازی) برای مخاطب ارسال شد!',
-              '🤫 Stealth disguised online ping sent to partner!',
+              '🤫 پینگ مخفی (با پوشش اعلان بازی) برای بیرون/داخل برنامه ارسال شد!',
+              '🤫 Stealth disguised online ping pushed to partner!',
             ),
           ),
           behavior: SnackBarBehavior.floating,
@@ -684,8 +747,9 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
     }
   }
 
-  void _sendHeartbeatPulse() {
+  Future<void> _sendHeartbeatPulse() async {
     if (_myDeviceId == null) return;
+    final peerId = await _resolvePeerDeviceId();
     final wsClient = ref.read(wsClientProvider);
     final rawEpoch = wsClient.sessionEpoch;
     final epoch = (rawEpoch != null && rawEpoch.isNotEmpty)
@@ -696,7 +760,7 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
       'version': 1,
       'signalType': 'heartbeat_pulse',
       'senderDeviceId': _myDeviceId,
-      'recipientDeviceId': _peerDeviceId ?? 'peer',
+      'recipientDeviceId': peerId ?? _peerDeviceId ?? 'peer',
       'sessionEpoch': epoch,
       'encryptedPayload': '',
       'iv': '',
@@ -704,12 +768,39 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
       'seq': 0,
       'timestamp': DateTime.now().millisecondsSinceEpoch,
     });
+    if (peerId != null) {
+      unawaited(RelayDirectoryService.pushInboxEvent(
+        recipientDeviceId: peerId,
+        senderDeviceId: _myDeviceId!,
+        eventType: 'heartbeat_pulse',
+        roomToken: _activeToken,
+      ));
+    }
     AutoLockService().triggerHeartbeatVibration();
     _heartbeatWaveTimer?.cancel();
-    setState(() {
-      _showHeartbeatWave = true;
-      _showAttachDock = false;
-    });
+    if (mounted) {
+      setState(() {
+        _showHeartbeatWave = true;
+        _showAttachDock = false;
+      });
+      final s = S(ref.read(appLocaleProvider));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            peerId != null
+                ? s.tr(
+                    '❤️‍🔥 تپش قلب زنده به صفحه مخاطب (حتی بیرون از برنامه) ارسال شد!',
+                    '❤️‍🔥 Live Heartbeat pushed to partner!',
+                  )
+                : s.tr(
+                    '❤️‍🔥 تپش قلب ارسال شد (منتظر ثبت شناسه مخاطب).',
+                    '❤️‍🔥 Heartbeat sent.',
+                  ),
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
     _heartbeatWaveTimer = Timer(const Duration(milliseconds: 1500), () {
       if (mounted) setState(() => _showHeartbeatWave = false);
     });
