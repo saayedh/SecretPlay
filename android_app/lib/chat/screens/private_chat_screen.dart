@@ -433,7 +433,8 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
     bool isCyberPitch = false,
     int? voiceDurationSec,
   }) async {
-    var sent = await ref.read(chatSessionProvider.notifier).sendMessage(
+    final notifier = ref.read(chatSessionProvider.notifier);
+    var sent = await notifier.sendMessage(
           text,
           contentType: contentType,
           mediaBase64: mediaBase64,
@@ -444,20 +445,24 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
           isCyberPitch: isCyberPitch,
           voiceDurationSec: voiceDurationSec,
         );
-    if (!sent && widget.activeContact != null && _myDeviceId != null && _myKeyPair != null) {
+    if (!sent &&
+        notifier.lastSendError == SendError.noPeerKey &&
+        widget.activeContact != null &&
+        _myDeviceId != null &&
+        _myKeyPair != null) {
       final lookedUp = await RelayDirectoryService.lookupBySecretNumber(
         widget.activeContact!.contactId,
       );
       if (lookedUp != null) {
         _peerDeviceId = lookedUp['deviceId'];
         _peerPublicKey = lookedUp['publicKey'];
-        ref.read(chatSessionProvider.notifier).initializeSession(
+        notifier.initializeSession(
               myDeviceId: _myDeviceId!,
               peerDeviceId: lookedUp['deviceId']!,
               peerPublicKeyBase64: lookedUp['publicKey']!,
               myIdentityKeyPair: _myKeyPair!,
             );
-        sent = await ref.read(chatSessionProvider.notifier).sendMessage(
+        sent = await notifier.sendMessage(
               text,
               contentType: contentType,
               mediaBase64: mediaBase64,
@@ -472,15 +477,18 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
     }
     if (!sent && mounted) {
       final s = S(ref.read(appLocaleProvider));
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            s.tr(
+      final err = notifier.lastSendError;
+      final msgText = err == SendError.tooLarge
+          ? s.tr(
+              'حجم تصویر یا صدا بیش از حد مجاز است (حداکثر ~900KB).',
+              'Media payload exceeds relay frame limit.',
+            )
+          : s.tr(
               'مخاطب هنوز یک بار وارد برنامه نشده تا کلید رمزنگاری‌اش ثبت شود. به محض ورود اولش، ارسال آفلاین فعال می‌شود!',
               'Partner has not opened the app once yet to register their E2EE key.',
-            ),
-          ),
-        ),
+            );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msgText)),
       );
     }
     _scrollToBottom();
@@ -1448,17 +1456,30 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
                 ),
                 if (msg.isMe) ...[
                   const SizedBox(width: 4),
-                  Icon(
-                    msg.status == MessageDeliveryStatus.relayed
-                        ? Icons.done_all_rounded
-                        : (msg.status == MessageDeliveryStatus.sent
-                            ? Icons.schedule_rounded
-                            : Icons.done_rounded),
-                    color: msg.status == MessageDeliveryStatus.relayed
-                        ? const Color(0xFF00FFA3)
-                        : Colors.white70,
-                    size: 13,
-                  ),
+                  if (msg.status == MessageDeliveryStatus.failed)
+                    GestureDetector(
+                      onTap: () => ref.read(chatSessionProvider.notifier).resendFailedMessage(msg.id),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.error_outline_rounded, color: Color(0xFFFF453A), size: 14),
+                          SizedBox(width: 2),
+                          Text('تلاش مجدد', style: TextStyle(color: Color(0xFFFF453A), fontSize: 10)),
+                        ],
+                      ),
+                    )
+                  else
+                    Icon(
+                      msg.status == MessageDeliveryStatus.relayed
+                          ? Icons.done_all_rounded
+                          : (msg.status == MessageDeliveryStatus.sent
+                              ? Icons.done_rounded
+                              : Icons.schedule_rounded),
+                      color: msg.status == MessageDeliveryStatus.relayed
+                          ? const Color(0xFF00FFA3)
+                          : Colors.white70,
+                      size: 13,
+                    ),
                 ],
               ],
             ),

@@ -96,7 +96,7 @@ class _NeonSketchDialogState extends State<NeonSketchDialog> {
     try {
       final boundary = _repaintKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
       if (boundary == null) return;
-      final ui.Image image = await boundary.toImage(pixelRatio: 1.5);
+      final ui.Image image = await boundary.toImage(pixelRatio: 1.0);
       final ByteData? byteData = await image.toByteData(format: ui.ImageByteFormat.png);
       if (byteData == null) return;
       final Uint8List pngBytes = byteData.buffer.asUint8List();

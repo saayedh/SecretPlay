@@ -67,7 +67,7 @@ class _EncryptedPhotoStudioDialogState extends State<EncryptedPhotoStudioDialog>
     try {
       final boundary = _captureKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
       if (boundary == null) return;
-      final ui.Image img = await boundary.toImage(pixelRatio: 1.5);
+      final ui.Image img = await boundary.toImage(pixelRatio: 1.0);
       final ByteData? byteData = await img.toByteData(format: ui.ImageByteFormat.png);
       if (byteData == null) return;
       final Uint8List bytes = byteData.buffer.asUint8List();

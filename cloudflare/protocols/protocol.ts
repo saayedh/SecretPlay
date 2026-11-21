@@ -9,6 +9,8 @@ export type ProtocolMessageType =
   | 'session_status'
   | 'msg'
   | 'msg_ack'
+  | 'msg_received'
+  | 'msg_delivered'
   | 'signal'
   | 'ping'
   | 'pong'

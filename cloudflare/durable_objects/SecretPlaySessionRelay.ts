@@ -91,9 +91,10 @@ interface PairRecord {
 
 const MAX_AUTH_SKEW_MS = 60_000;
 const RATE_LIMIT_WINDOW_MS = 10_000;
-const RATE_LIMIT_MAX_FRAMES = 60;
+const RATE_LIMIT_MAX_FRAMES = 180;
 const MAX_SEEN_NONCES = 1024;
 const PAIRING_TTL_MS = 5 * 60 * 1000;
+const OFFLINE_MSG_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 function decodeBase64(b64: string): Uint8Array {
   const binary = atob(b64);
@@ -490,7 +491,7 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
       return;
     }
 
-    switch (parsed.type) {
+    switch (parsed.type as string) {
       case 'ping':
         this.handlePing(ws);
         break;
@@ -501,6 +502,10 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
 
       case 'msg':
         this.handleEncryptedMessage(ws, parsed as EncryptedChatMessage);
+        break;
+
+      case 'msg_received':
+        this.handleMessageReceived(ws, parsed as unknown as { msgId?: string; senderDeviceId?: string });
         break;
 
       case 'signal':
@@ -776,29 +781,26 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
     };
     ws.send(JSON.stringify(authRes));
 
-    // Deliver any queued offline E2EE messages waiting for this device (from both SQLite & memory) and immediately wipe them
+    // Deliver any queued offline E2EE messages waiting for this device (retained until client confirms with msg_received)
     try {
+      this.ctx.storage.sql.exec(
+        `DELETE FROM offline_messages WHERE created_at < ?;`,
+        now - OFFLINE_MSG_TTL_MS
+      );
       const sqlRows = [
         ...this.ctx.storage.sql.exec(
           `SELECT id, payload_json FROM offline_messages WHERE recipient_device_id = ? ORDER BY id ASC LIMIT 100;`,
           deviceId
         ),
       ] as unknown as { id: number; payload_json: string }[];
-      if (sqlRows.length > 0) {
-        this.ctx.storage.sql.exec(
-          `DELETE FROM offline_messages WHERE recipient_device_id = ?;`,
-          deviceId
-        );
-        for (const row of sqlRows) {
-          try {
-            ws.send(row.payload_json);
-          } catch {}
-        }
+      for (const row of sqlRows) {
+        try {
+          ws.send(row.payload_json);
+        } catch {}
       }
     } catch {}
     const pendingForDevice = this.offlineQueue.get(deviceId);
     if (pendingForDevice && pendingForDevice.length > 0) {
-      this.offlineQueue.delete(deviceId);
       for (const queuedMsg of pendingForDevice) {
         try {
           ws.send(JSON.stringify(queuedMsg));
@@ -927,8 +929,33 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
       return;
     }
 
+    // Persist in SQLite queue until recipient explicitly confirms receipt (prevents loss on half-open sockets)
+    const targetDeviceIdForQueue =
+      (pair && pair.device_a_id === senderDeviceId
+        ? pair.device_b_id
+        : pair && pair.device_b_id === senderDeviceId
+          ? pair.device_a_id
+          : null) || msg.recipientDeviceId;
+    if (isTokenRoom && targetDeviceIdForQueue && targetDeviceIdForQueue !== senderDeviceId) {
+      try {
+        this.ctx.storage.sql.exec(
+          `INSERT OR IGNORE INTO offline_messages (recipient_device_id, msg_id, payload_json, created_at) VALUES (?, ?, ?, ?);`,
+          targetDeviceIdForQueue,
+          msg.msgId,
+          JSON.stringify(msg),
+          Date.now()
+        );
+      } catch {}
+    }
+
     // Forward ciphertext in memory directly to recipient
-    recipient.send(JSON.stringify(msg));
+    let deliveredDirect = false;
+    try {
+      recipient.send(JSON.stringify(msg));
+      deliveredDirect = true;
+    } catch {
+      deliveredDirect = false;
+    }
 
     // Non-blocking telemetry counter to Admin Registry
     const adminStub = this.getAdminStub();
@@ -949,10 +976,54 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
         type: 'msg_ack',
         version: 1,
         msgId: msg.msgId,
-        status: 'relayed',
+        status: deliveredDirect ? 'relayed' : 'queued_offline',
         timestamp: Date.now(),
       })
     );
+  }
+
+  private handleMessageReceived(
+    ws: WebSocket,
+    receipt: { msgId?: string; senderDeviceId?: string }
+  ): void {
+    const receiverDeviceId = this.getSocketDeviceId(ws);
+    const msgId = receipt.msgId;
+    if (!receiverDeviceId || !msgId) return;
+
+    try {
+      this.ctx.storage.sql.exec(
+        `DELETE FROM offline_messages WHERE recipient_device_id = ? AND msg_id = ?;`,
+        receiverDeviceId,
+        msgId
+      );
+    } catch {}
+
+    const list = this.offlineQueue.get(receiverDeviceId);
+    if (list && list.length > 0) {
+      const next = list.filter((m) => m.msgId !== msgId);
+      if (next.length === 0) {
+        this.offlineQueue.delete(receiverDeviceId);
+      } else {
+        this.offlineQueue.set(receiverDeviceId, next);
+      }
+    }
+
+    // Notify the original sender if currently connected so their checkmarks update to delivered (✓✓)
+    const sockets = this.getConnectedSocketMap();
+    for (const [dId, peerWs] of sockets.entries()) {
+      if (dId !== receiverDeviceId) {
+        try {
+          peerWs.send(
+            JSON.stringify({
+              type: 'msg_delivered',
+              version: 1,
+              msgId,
+              timestamp: Date.now(),
+            })
+          );
+        } catch {}
+      }
+    }
   }
 
   private handleSignaling(ws: WebSocket, signal: SignalingMessage): void {

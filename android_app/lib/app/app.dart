@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/theme.dart';
 import '../security/auto_lock_service.dart';
 import '../game/screens/game_home_screen.dart';
+import '../chat/screens/private_chat_screen.dart' show wsClientProvider;
 
 class SecretPlayApp extends ConsumerStatefulWidget {
   const SecretPlayApp({super.key});
@@ -34,6 +35,12 @@ class _SecretPlayAppState extends ConsumerState<SecretPlayApp> with WidgetsBindi
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // Sockets are often silently dead after the phone was in background: verify immediately.
+      try {
+        ref.read(wsClientProvider).probeConnection();
+      } catch (_) {}
+    }
     final shouldObscure = AutoLockService().strictBackgroundAutoLock &&
         (state == AppLifecycleState.paused || state == AppLifecycleState.hidden);
     if (_obscureScreen != shouldObscure && mounted) {

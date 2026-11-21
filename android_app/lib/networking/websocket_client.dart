@@ -19,6 +19,7 @@ class SecretPlayWebSocketClient {
   Timer? _heartbeatTimer;
   Timer? _sessionTimeoutTimer;
   Timer? _reconnectTimer;
+  Timer? _probeTimer;
   String? _lastUrl;
   bool _manualDisconnect = false;
   int _connGen = 0;
@@ -259,6 +260,7 @@ class SecretPlayWebSocketClient {
 
         case 'msg':
         case 'msg_ack':
+        case 'msg_delivered':
           _messageController.add(map);
           break;
 
@@ -272,13 +274,20 @@ class SecretPlayWebSocketClient {
           break;
 
         case 'terminate':
+          // A server-side terminate (rate limit, stale epoch, peer lock) must NEVER permanently kill
+          // the chat. Only an explicit revocation stops reconnecting; everything else reconnects.
           final reason = map['reason'] as String? ?? 'peer_lock';
           _terminateController.add(reason);
-          disconnect();
+          if (reason == 'revoked') {
+            disconnect();
+          } else {
+            _handleUnexpectedDrop();
+          }
           break;
 
         case 'pong':
-          // Heartbeat acknowledged
+          _probeTimer?.cancel();
+          _probeTimer = null;
           break;
       }
     } catch (e) {
@@ -310,6 +319,35 @@ class SecretPlayWebSocketClient {
     }
   }
 
+  /// Sends a ping and forces a reconnect if the server doesn't answer within 6s.
+  /// Called when the app returns to foreground, because mobile OSes silently kill sockets in background.
+  void probeConnection() {
+    if (_manualDisconnect || _reconnectCallback == null) return;
+    if (_channel == null || _status == ConnectionStatus.disconnected) {
+      _reconnectTimer?.cancel();
+      _reconnectAttempts = 0;
+      _reconnectCallback?.call();
+      return;
+    }
+    if (_status != ConnectionStatus.authenticated && _status != ConnectionStatus.peerOnline) return;
+    _probeTimer?.cancel();
+    _probeTimer = Timer(const Duration(seconds: 6), () {
+      _probeTimer = null;
+      debugPrint('[WS] Probe got no pong -> socket is dead, reconnecting');
+      _reconnectAttempts = 0;
+      _handleUnexpectedDrop();
+    });
+    try {
+      _channel!.sink.add(jsonEncode({
+        'type': 'ping',
+        'version': 1,
+        'timestamp': DateTime.now().millisecondsSinceEpoch,
+      }));
+    } catch (_) {
+      _handleUnexpectedDrop();
+    }
+  }
+
   void sendRaw(Map<String, dynamic> payload) {
     final encoded = jsonEncode(payload);
     final type = payload['type'];
@@ -323,11 +361,16 @@ class SecretPlayWebSocketClient {
         return;
       } catch (_) {}
     }
-    if (!isAuthOrPing && _pendingOutboundQueue.length < 50) {
+    // Never queue ephemeral signals (typing / call SDP): stale ones are useless and used to fill the
+    // queue so real chat messages got silently dropped. Chat messages are additionally kept by
+    // ChatSessionNotifier until the server acknowledges them, so nothing is lost here.
+    if (type == 'msg' || type == 'msg_received') {
+      if (_pendingOutboundQueue.length >= 300) _pendingOutboundQueue.removeAt(0);
       _pendingOutboundQueue.add(encoded);
-      if (_status == ConnectionStatus.disconnected && !_manualDisconnect) {
-        _reconnectCallback?.call();
-      }
+    }
+    if (!isAuthOrPing && _status == ConnectionStatus.disconnected && !_manualDisconnect) {
+      _reconnectTimer?.cancel();
+      _reconnectCallback?.call();
     }
   }
 
@@ -361,6 +404,8 @@ class SecretPlayWebSocketClient {
 
   void _closeSocketOnly() {
     _connGen++;
+    _probeTimer?.cancel();
+    _probeTimer = null;
     _heartbeatTimer?.cancel();
     _heartbeatTimer = null;
     _sessionTimeoutTimer?.cancel();

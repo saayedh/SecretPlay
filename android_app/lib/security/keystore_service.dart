@@ -185,6 +185,21 @@ class KeystoreService {
     await _delete(key);
   }
 
+  Future<void> saveRoomOutbox(String roomToken, String jsonEnvelopes) async {
+    final key = 'sp_chat_outbox_${roomToken.trim().toUpperCase()}';
+    await _write(key, jsonEnvelopes);
+  }
+
+  Future<String?> getRoomOutbox(String roomToken) async {
+    final key = 'sp_chat_outbox_${roomToken.trim().toUpperCase()}';
+    return await _read(key);
+  }
+
+  Future<void> deleteRoomOutbox(String roomToken) async {
+    final key = 'sp_chat_outbox_${roomToken.trim().toUpperCase()}';
+    await _delete(key);
+  }
+
   Future<void> revokePairing() async {
     await _delete(AppConstants.keyPeerDeviceId);
     await _delete(AppConstants.keyPeerPublicKey);
