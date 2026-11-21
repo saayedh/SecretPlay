@@ -302,15 +302,17 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
 
       if (signalType == 'call_request' && !_isShowingIncomingCall) {
         _isShowingIncomingCall = true;
-        bool incomingVideo = false;
-        final rawEnc = payload['encryptedPayload'] as String? ?? '';
-        if (rawEnc.isNotEmpty) {
-          try {
-            final decoded = utf8.decode(base64Decode(rawEnc));
-            if (decoded.contains('"video":true')) {
-              incomingVideo = true;
-            }
-          } catch (_) {}
+        bool incomingVideo = payload['isVideo'] == true;
+        if (!incomingVideo) {
+          final rawEnc = payload['encryptedPayload'] as String? ?? '';
+          if (rawEnc.isNotEmpty) {
+            try {
+              final decoded = utf8.decode(base64Decode(rawEnc));
+              if (decoded.contains('"video":true')) {
+                incomingVideo = true;
+              }
+            } catch (_) {}
+          }
         }
         Navigator.of(context)
             .push(
@@ -1127,6 +1129,15 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
                                 onPressed: () =>
                                     setState(() => _showAttachDock = !_showAttachDock),
                               ),
+                              IconButton(
+                                icon: const Icon(
+                                  Icons.emoji_emotions_rounded,
+                                  color: Color(0xFFFFD60A),
+                                  size: 24,
+                                ),
+                                tooltip: s.tr('استیکرها', 'Stickers'),
+                                onPressed: _openStickerSheet,
+                              ),
                               Expanded(
                                 child: TextField(
                                   controller: _textController,
@@ -1272,6 +1283,8 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
         : null;
     final isPlayingVoice = _playingVoiceIds.contains(msg.id);
 
+    final isSticker = msg.contentType == ChatContentType.sticker && sticker != null;
+
     return Align(
       alignment: msg.isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
@@ -1279,28 +1292,51 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
         constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.78),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         decoration: BoxDecoration(
-          gradient: msg.isMe
-              ? const LinearGradient(
-                  colors: [Color(0xFF0066FF), Color(0xFF0099FF)],
+          gradient: isSticker
+              ? LinearGradient(
+                  colors: [
+                    sticker.neonColor.withOpacity(0.24),
+                    const Color(0xFF121628).withOpacity(0.92),
+                  ],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 )
-              : const LinearGradient(
-                  colors: [Color(0xFF1A1E2E), Color(0xFF22273B)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
+              : (msg.isMe
+                  ? const LinearGradient(
+                      colors: [Color(0xFF007CF0), Color(0xFF00B4D8)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    )
+                  : const LinearGradient(
+                      colors: [Color(0xFF15192B), Color(0xFF1D233B)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    )),
           borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(18),
-            topRight: const Radius.circular(18),
-            bottomLeft: Radius.circular(msg.isMe ? 18 : 4),
-            bottomRight: Radius.circular(msg.isMe ? 4 : 18),
+            topLeft: const Radius.circular(20),
+            topRight: const Radius.circular(20),
+            bottomLeft: Radius.circular(msg.isMe ? 20 : 5),
+            bottomRight: Radius.circular(msg.isMe ? 5 : 20),
           ),
+          boxShadow: [
+            BoxShadow(
+              color: (isSticker
+                      ? sticker.neonColor
+                      : (msg.isMe ? const Color(0xFF0099FF) : Colors.black))
+                  .withOpacity(isSticker ? 0.22 : 0.20),
+              blurRadius: 14,
+              offset: const Offset(0, 4),
+            ),
+          ],
           border: msg.isFlashScreen
-              ? Border.all(color: const Color(0xFFFF007A), width: 1.5)
+              ? Border.all(color: const Color(0xFFFF007A), width: 1.6)
               : (remainingBurnSec != null
-                  ? Border.all(color: const Color(0xFFFF9F0A), width: 1.4)
-                  : null),
+                  ? Border.all(color: const Color(0xFFFF9F0A), width: 1.5)
+                  : Border.all(
+                      color: isSticker
+                          ? sticker.neonColor.withOpacity(0.6)
+                          : Colors.white.withOpacity(msg.isMe ? 0.14 : 0.08),
+                    )),
         ),
         child: Column(
           crossAxisAlignment: msg.isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,

@@ -356,6 +356,7 @@ class WebRtcVoiceService {
 
     if (_isVideoCall) {
       await setAudioRoute(AudioRoute.speaker);
+      await _ensureLocalStream();
     }
 
     final reqMeta = jsonEncode({'video': video});
@@ -365,6 +366,7 @@ class WebRtcVoiceService {
       'type': 'signal',
       'version': 1,
       'signalType': 'call_request',
+      'isVideo': video,
       'senderDeviceId': _myDeviceId,
       'recipientDeviceId': _peerDeviceId,
       'sessionEpoch': _wsClient.sessionEpoch ?? 'offline-room',
@@ -469,12 +471,33 @@ class WebRtcVoiceService {
     try {
       final rawSdpJson = await _unpackSignalPayload(payload);
       final map = jsonDecode(rawSdpJson) as Map<String, dynamic>;
-      if (map['video'] == true) {
+      if (map['video'] == true && !_isVideoCall) {
         _isVideoCall = true;
+        _isCameraEnabled = true;
+        await setAudioRoute(AudioRoute.speaker);
       }
 
       if (_peerConnection == null) {
         await _initPeerConnection(_networkMode, peerDeviceId);
+      } else if (_isVideoCall &&
+          (_localStream == null || _localStream!.getVideoTracks().isEmpty)) {
+        try {
+          final camStream = await navigator.mediaDevices.getUserMedia({
+            'audio': false,
+            'video': {
+              'facingMode': 'user',
+              'width': {'ideal': 640},
+              'height': {'ideal': 480},
+              'frameRate': {'ideal': 24},
+            },
+          });
+          for (final vt in camStream.getVideoTracks()) {
+            _localStream?.addTrack(vt);
+            await _peerConnection!.addTrack(vt, _localStream ?? camStream);
+          }
+          localRenderer.srcObject = _localStream ?? camStream;
+          if (!_videoUpdateController.isClosed) _videoUpdateController.add(null);
+        } catch (_) {}
       }
 
       final description = RTCSessionDescription(map['sdp'] as String?, map['type'] as String?);
@@ -557,14 +580,11 @@ class WebRtcVoiceService {
     }
   }
 
-  Future<void> _initPeerConnection(NetworkMode mode, String peerDeviceId) async {
-    if (_peerConnection != null) return;
+  Future<void> _ensureLocalStream() async {
+    if (_localStream != null) {
+      if (!_isVideoCall || _localStream!.getVideoTracks().isNotEmpty) return;
+    }
     await ensureRenderersInitialized();
-
-    final config = await _getIceServers(mode);
-    _peerConnection = await createPeerConnection(config);
-    _remoteDescSet = false;
-
     final mediaConstraints = <String, dynamic>{
       'audio': {
         'echoCancellation': true,
@@ -574,9 +594,9 @@ class WebRtcVoiceService {
       'video': _isVideoCall
           ? {
               'facingMode': 'user',
-              'width': {'ideal': 640},
-              'height': {'ideal': 480},
-              'frameRate': {'ideal': 24},
+              'width': {'ideal': 640, 'max': 1280},
+              'height': {'ideal': 480, 'max': 720},
+              'frameRate': {'ideal': 24, 'max': 30},
             }
           : false,
     };
@@ -598,6 +618,20 @@ class WebRtcVoiceService {
       if (!_videoUpdateController.isClosed) {
         _videoUpdateController.add(null);
       }
+    }
+  }
+
+  Future<void> _initPeerConnection(NetworkMode mode, String peerDeviceId) async {
+    if (_peerConnection != null) return;
+    await ensureRenderersInitialized();
+
+    final config = await _getIceServers(mode);
+    _peerConnection = await createPeerConnection(config);
+    _remoteDescSet = false;
+
+    await _ensureLocalStream();
+
+    if (_localStream != null) {
       for (final track in _localStream!.getTracks()) {
         await _peerConnection!.addTrack(track, _localStream!);
       }
@@ -617,16 +651,22 @@ class WebRtcVoiceService {
       } catch (_) {}
     }
 
-    _peerConnection!.onTrack = (RTCTrackEvent event) {
+    _peerConnection!.onTrack = (RTCTrackEvent event) async {
       if (event.streams.isNotEmpty) {
         _remoteStream = event.streams.first;
-        remoteRenderer.srcObject = _remoteStream;
-        for (final audioTrack in _remoteStream!.getAudioTracks()) {
-          audioTrack.enabled = true;
-        }
-        if (!_videoUpdateController.isClosed) {
-          _videoUpdateController.add(null);
-        }
+      } else {
+        _remoteStream ??= await createLocalMediaStream('remote_media');
+        await _remoteStream!.addTrack(event.track);
+      }
+      if (event.track.kind == 'audio') {
+        event.track.enabled = true;
+      }
+      remoteRenderer.srcObject = _remoteStream;
+      for (final audioTrack in _remoteStream!.getAudioTracks()) {
+        audioTrack.enabled = true;
+      }
+      if (!_videoUpdateController.isClosed) {
+        _videoUpdateController.add(null);
       }
     };
 
