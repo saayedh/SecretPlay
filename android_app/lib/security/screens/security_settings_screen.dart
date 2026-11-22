@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
+import '../../chat/chat_message.dart';
 import '../../cryptography/crypto_service.dart';
+import '../../ghost_touch/ghost_touch_theme.dart';
+import '../../ghost_touch/models/hologram_models.dart';
+import '../../ghost_touch/overlay/floating_hologram_experience.dart';
 import '../../security/keystore_service.dart';
 import '../../security/auto_lock_service.dart';
 import '../../recovery/screens/recovery_screen.dart';
@@ -25,6 +29,7 @@ class _SecuritySettingsScreenState extends State<SecuritySettingsScreen> {
   @override
   void initState() {
     super.initState();
+    GhostTouchPreferencesService.instance.load();
     _loadKeys();
   }
 
@@ -263,6 +268,8 @@ class _SecuritySettingsScreenState extends State<SecuritySettingsScreen> {
               ),
             ),
             const SizedBox(height: 8),
+            _buildGhostTouchSettingsCard(),
+            const SizedBox(height: 8),
             Card(
               color: const Color(0xFF1C1C1E),
               child: ListTile(
@@ -326,6 +333,188 @@ class _SecuritySettingsScreenState extends State<SecuritySettingsScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildGhostTouchSettingsCard() {
+    return ValueListenableBuilder<GhostTouchPreferences>(
+      valueListenable: GhostTouchPreferencesService.instance.notifier,
+      builder: (context, prefs, _) {
+        final svc = GhostTouchPreferencesService.instance;
+        return Card(
+          color: const Color(0xFF151226),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: GhostPalette.neonPink.withOpacity(0.45)),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.auto_awesome_rounded,
+                        color: GhostPalette.neonPink, size: 22),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text(
+                        'Ghost Touch Holographic Studio (تنظیمات هولوگرام)',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                    TextButton.icon(
+                      onPressed: () {
+                        final demoMsg = EphemeralChatMessage(
+                          senderDeviceId: 'preview',
+                          text: 'Ghost Touch v2.0 ✨',
+                          contentType: ChatContentType.flashCard,
+                          cardDataJson: FlashCardData(
+                            template: FlashCardTemplate.romanticNeonHeart,
+                            text: 'پیش‌نمایش هولوگرام زنده برای تو ✨',
+                            stickerId: 'love_glowing_heart',
+                            hologramStyle: prefs.defaultStyle,
+                            durationSec: prefs.displayDurationSec,
+                          ).toJsonString(),
+                          hologramStyle: prefs.defaultStyle.name,
+                          displayDurationSec: prefs.displayDurationSec,
+                          isFlashScreen: true,
+                          timestamp: DateTime.now().millisecondsSinceEpoch,
+                          isMe: false,
+                        );
+                        showDialog<void>(
+                          context: context,
+                          builder: (dCtx) => FloatingHologramExperience(
+                            message: demoMsg,
+                            isFa: true,
+                            hologramStyle: prefs.defaultStyle,
+                            cardData: FlashCardData.fromJsonString(demoMsg.cardDataJson),
+                            autoVanishSeconds: prefs.displayDurationSec,
+                            onDismiss: () => Navigator.of(dCtx).pop(),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.play_circle_fill_rounded,
+                          color: GhostPalette.electricCyan, size: 18),
+                      label: const Text(
+                        'پیش‌نمایش',
+                        style: TextStyle(
+                            color: GhostPalette.electricCyan,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'سبک پیش‌فرض هولوگرام:',
+                  style: TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: HologramStyle.values.map((st) {
+                    final active = prefs.defaultStyle == st;
+                    return ChoiceChip(
+                      avatar: Icon(st.icon, size: 14, color: Colors.white),
+                      label: Text(st.label(true), style: const TextStyle(fontSize: 11)),
+                      selected: active,
+                      selectedColor: GhostPalette.neonPink.withOpacity(0.32),
+                      onSelected: (_) => svc.update(prefs.copyWith(defaultStyle: st)),
+                    );
+                  }).toList(),
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  'موقعیت نمایش روی صفحه (Overlay Position):',
+                  style: TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: OverlayPosition.values.map((pos) {
+                    final active = prefs.position == pos;
+                    final label = pos == OverlayPosition.top
+                        ? 'بالا (Top)'
+                        : (pos == OverlayPosition.bottom ? 'پایین (Bottom)' : 'مرکز (Center)');
+                    return Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 3),
+                        child: ChoiceChip(
+                          label: Text(label, style: const TextStyle(fontSize: 11)),
+                          selected: active,
+                          selectedColor: GhostPalette.electricCyan.withOpacity(0.28),
+                          onSelected: (_) => svc.update(prefs.copyWith(position: pos)),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Text(
+                      'مدت نمایش: ${prefs.displayDurationSec}s',
+                      style: const TextStyle(color: Colors.white70, fontSize: 12),
+                    ),
+                    Expanded(
+                      child: Slider(
+                        value: prefs.displayDurationSec.toDouble().clamp(3.0, 20.0),
+                        min: 3,
+                        max: 20,
+                        divisions: 17,
+                        activeColor: GhostPalette.neonGreen,
+                        onChanged: (v) =>
+                            svc.update(prefs.copyWith(displayDurationSec: v.round())),
+                      ),
+                    ),
+                  ],
+                ),
+                Row(
+                  children: [
+                    Text(
+                      'شدت نور و افکت: ${(prefs.effectIntensity * 100).round()}%',
+                      style: const TextStyle(color: Colors.white70, fontSize: 12),
+                    ),
+                    Expanded(
+                      child: Slider(
+                        value: prefs.effectIntensity,
+                        min: 0.2,
+                        max: 1.0,
+                        divisions: 8,
+                        activeColor: GhostPalette.neonPurple,
+                        onChanged: (v) =>
+                            svc.update(prefs.copyWith(effectIntensity: v)),
+                      ),
+                    ),
+                  ],
+                ),
+                SwitchListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('لرزش اختصاصی هنگام دریافت افکت (Vibrate)'),
+                  value: prefs.vibrateEnabled,
+                  activeColor: GhostPalette.neonPink,
+                  onChanged: (v) => svc.update(prefs.copyWith(vibrateEnabled: v)),
+                ),
+                SwitchListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('حالت کم‌مصرف / کاهش حرکت (Reduced Motion)'),
+                  value: prefs.reducedMotion,
+                  activeColor: GhostPalette.electricCyan,
+                  onChanged: (v) => svc.update(prefs.copyWith(reducedMotion: v)),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 

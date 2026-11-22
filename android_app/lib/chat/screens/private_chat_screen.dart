@@ -17,7 +17,13 @@ import '../../cryptography/crypto_service.dart';
 import '../../networking/websocket_client.dart';
 import '../chat_message.dart';
 import '../chat_session.dart';
-import '../widgets/neon_sketch_dialog.dart';
+import '../../ghost_touch/cards/holographic_card_designer.dart';
+import '../../ghost_touch/cards/holographic_card_renderer.dart';
+import '../../ghost_touch/drawing/ultimate_drawing_studio.dart';
+import '../../ghost_touch/models/hologram_models.dart';
+import '../../ghost_touch/stickers/ghost_sticker_catalog.dart';
+import '../../ghost_touch/stickers/ghost_sticker_painter.dart';
+import '../../ghost_touch/stickers/ghost_sticker_studio.dart';
 import '../widgets/cyber_sticker_sheet.dart';
 import '../widgets/encrypted_photo_studio_dialog.dart';
 import '../widgets/flash_hologram_overlay.dart';
@@ -68,6 +74,7 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
   EphemeralChatMessage? _activeFlashHologram;
   Timer? _uiCountdownTick;
   final Set<String> _playingVoiceIds = {};
+  final Map<String, Uint8List> _decodedMediaCache = {};
   bool _isPeerTyping = false;
   Timer? _peerTypingResetTimer;
   Timer? _myTypingThrottleTimer;
@@ -88,6 +95,7 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
     _connectionStatus = ref.read(wsClientProvider).status;
     AutoLockService().addLockListener(_onAutoLock);
     AutoLockService().setStandbyServiceEnabled(true);
+    GhostTouchPreferencesService.instance.load();
     _uiCountdownTick = Timer.periodic(const Duration(seconds: 1), (_) {
       final messages = ref.read(chatSessionProvider);
       if (mounted && messages.any((m) => m.expiresAtMs != null)) {
@@ -469,6 +477,21 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
     });
   }
 
+  Uint8List? _getDecodedMedia(String id, String mediaBase64) {
+    final cached = _decodedMediaCache[id];
+    if (cached != null) return cached;
+    try {
+      final bytes = base64Decode(mediaBase64);
+      if (_decodedMediaCache.length >= 60) {
+        _decodedMediaCache.remove(_decodedMediaCache.keys.first);
+      }
+      _decodedMediaCache[id] = bytes;
+      return bytes;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> _sendWithAutoLookup({
     required String text,
     ChatContentType contentType = ChatContentType.text,
@@ -479,6 +502,9 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
     bool isOneTimeVoice = false,
     bool isCyberPitch = false,
     int? voiceDurationSec,
+    String? hologramStyle,
+    String? cardDataJson,
+    int? displayDurationSec,
   }) async {
     final notifier = ref.read(chatSessionProvider.notifier);
     var sent = await notifier.sendMessage(
@@ -491,6 +517,9 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
           isOneTimeVoice: isOneTimeVoice,
           isCyberPitch: isCyberPitch,
           voiceDurationSec: voiceDurationSec,
+          hologramStyle: hologramStyle,
+          cardDataJson: cardDataJson,
+          displayDurationSec: displayDurationSec,
         );
     if (!sent &&
         notifier.lastSendError == SendError.noPeerKey &&
@@ -519,6 +548,9 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
               isOneTimeVoice: isOneTimeVoice,
               isCyberPitch: isCyberPitch,
               voiceDurationSec: voiceDurationSec,
+              hologramStyle: hologramStyle,
+              cardDataJson: cardDataJson,
+              displayDurationSec: displayDurationSec,
             );
       }
     }
@@ -541,26 +573,38 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
     if (sent && isFlashScreen && _myDeviceId != null) {
       final targetId = await _resolvePeerDeviceId();
       if (targetId != null) {
+        final prefs = GhostTouchPreferencesService.instance.current;
         final st = contentType == ChatContentType.sticker
             ? CyberStickerCatalog.findById(stickerId)
             : null;
-        final colorHex = st != null
-            ? '#${(st.neonColor.value & 0xFFFFFF).toRadixString(16).padLeft(6, '0').toUpperCase()}'
-            : '#FF007A';
+        final parsedCard = cardDataJson != null
+            ? FlashCardData.fromJsonString(cardDataJson)
+            : null;
+        final colorHex = parsedCard != null
+            ? parsedCard.accentColorHex
+            : (st != null
+                ? '#${(st.neonColor.value & 0xFFFFFF).toRadixString(16).padLeft(6, '0').toUpperCase()}'
+                : '#FF3D9A');
+        final title = contentType == ChatContentType.flashCard
+            ? '⚡ کارت هولوگرافیک فوری'
+            : (st != null ? st.titleFa : '⚡ پیام هولوگرافیک فوری');
         unawaited(RelayDirectoryService.pushInboxEvent(
           recipientDeviceId: targetId,
           senderDeviceId: _myDeviceId!,
           eventType: 'flash_hologram',
           emoji: st?.emoji,
-          title: st != null ? st.titleFa : '⚡ پیام هولوگرافیک فوری',
+          title: title,
           body: text,
           colorHex: colorHex,
           mediaBase64: (contentType == ChatContentType.drawing ||
                   contentType == ChatContentType.image)
               ? mediaBase64
               : null,
-          flashSeconds: 7,
+          flashSeconds: displayDurationSec ?? prefs.displayDurationSec,
           roomToken: _activeToken,
+          hologramStyle: hologramStyle ?? prefs.defaultStyle.name,
+          cardDataJson: cardDataJson,
+          stickerId: stickerId,
         ));
       }
     }
@@ -686,9 +730,10 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
   Future<void> _openSketchPad({bool initialFlash = true}) async {
     setState(() => _showAttachDock = false);
     final isFa = ref.read(appLocaleProvider) == AppLang.fa;
-    final res = await showDialog<NeonSketchResult>(
-      context: context,
-      builder: (_) => NeonSketchDialog(isFa: isFa, initialFlash: initialFlash),
+    final res = await UltimateDrawingStudio.open(
+      context,
+      isFa: isFa,
+      initialFlash: initialFlash,
     );
     if (res == null) return;
     await _sendWithAutoLookup(
@@ -697,6 +742,29 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
       mediaBase64: res.pngBase64,
       isFlashScreen: res.flashOnLockScreen,
       burnAfterSeconds: _burnTimerSeconds,
+      hologramStyle: res.hologramStyle.name,
+      displayDurationSec: res.durationSec,
+    );
+  }
+
+  Future<void> _openCardDesigner() async {
+    setState(() => _showAttachDock = false);
+    final isFa = ref.read(appLocaleProvider) == AppLang.fa;
+    final res = await HolographicCardDesigner.open(
+      context,
+      isFa: isFa,
+      initialFlash: true,
+    );
+    if (res == null) return;
+    await _sendWithAutoLookup(
+      text: res.cardData.text,
+      contentType: ChatContentType.flashCard,
+      stickerId: res.cardData.stickerId,
+      isFlashScreen: res.flashOnScreen,
+      burnAfterSeconds: _burnTimerSeconds,
+      hologramStyle: res.cardData.hologramStyle.name,
+      cardDataJson: res.cardData.toJsonString(),
+      displayDurationSec: res.cardData.durationSec,
     );
   }
 
@@ -826,22 +894,34 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
   Future<void> _openStickerSheet() async {
     setState(() => _showAttachDock = false);
     final isFa = ref.read(appLocaleProvider) == AppLang.fa;
-    final res = await showModalBottomSheet<CyberStickerSelection>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (_) => CyberStickerSheet(isFa: isFa),
-    );
+    final res = await GhostStickerStudio.show(context, isFa: isFa);
     if (res == null) return;
+    if (res.signaturePngBase64 != null && res.signaturePngBase64!.isNotEmpty) {
+      await _sendWithAutoLookup(
+        text: res.signatureName ?? (isFa ? 'استیکر امضای من' : 'Signature Sticker'),
+        contentType: ChatContentType.drawing,
+        mediaBase64: res.signaturePngBase64,
+        isFlashScreen: res.flashOnScreen,
+        burnAfterSeconds: _burnTimerSeconds,
+        hologramStyle: res.hologramStyle.name,
+        displayDurationSec: res.durationSec,
+      );
+      return;
+    }
     await _sendWithAutoLookup(
       text: isFa ? res.sticker.titleFa : res.sticker.titleEn,
       contentType: ChatContentType.sticker,
       stickerId: res.sticker.id,
       isFlashScreen: res.flashOnScreen,
       burnAfterSeconds: _burnTimerSeconds,
+      hologramStyle: res.hologramStyle.name,
+      displayDurationSec: res.durationSec,
     );
   }
 
-  void _openImageLightbox(String mediaBase64) {
+  void _openImageLightbox(String msgId, String mediaBase64) {
+    final bytes = _getDecodedMedia(msgId, mediaBase64);
+    if (bytes == null) return;
     showDialog(
       context: context,
       builder: (ctx) => Dialog(
@@ -851,7 +931,7 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
           children: [
             InteractiveViewer(
               child: Center(
-                child: Image.memory(base64Decode(mediaBase64), fit: BoxFit.contain),
+                child: Image.memory(bytes, fit: BoxFit.contain),
               ),
             ),
             Positioned(
@@ -1285,6 +1365,12 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
                                 onTap: _openStickerSheet,
                               ),
                               _buildAttachTile(
+                                icon: Icons.style_rounded,
+                                label: s.tr('کارت هولوگرام', 'Flash Card'),
+                                color: const Color(0xFFFF3D9A),
+                                onTap: _openCardDesigner,
+                              ),
+                              _buildAttachTile(
                                 icon: Icons.mic_rounded,
                                 label: s.tr('ویس واکی‌تاکی', 'Voice'),
                                 color: const Color(0xFFBF5AF2),
@@ -1455,8 +1541,32 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
                     child: FlashHologramOverlay(
                       message: _activeFlashHologram!,
                       isFa: s.isFa,
+                      hologramStyle: _activeFlashHologram!.hologramStyle != null
+                          ? HologramStyleExt.parse(_activeFlashHologram!.hologramStyle)
+                          : null,
+                      cardData: _activeFlashHologram!.cardDataJson != null
+                          ? FlashCardData.fromJsonString(
+                              _activeFlashHologram!.cardDataJson,
+                            )
+                          : null,
+                      autoVanishSeconds:
+                          _activeFlashHologram!.displayDurationSec ??
+                              GhostTouchPreferencesService
+                                  .instance.current.displayDurationSec,
                       onDismiss: () => setState(() => _activeFlashHologram = null),
                       onQuickReplySketch: () => _openSketchPad(initialFlash: true),
+                      onQuickReaction: (_) => _sendHeartbeatPulse(),
+                      onQuickStickerReply: (stId) {
+                        final st = GhostStickerCatalog.findById(stId);
+                        _sendWithAutoLookup(
+                          text: s.isFa ? st.titleFa : st.titleEn,
+                          contentType: ChatContentType.sticker,
+                          stickerId: st.id,
+                          isFlashScreen: true,
+                          hologramStyle: HologramStyle.floatingSticker.name,
+                        );
+                        setState(() => _activeFlashHologram = null);
+                      },
                     ),
                   ),
 
@@ -1473,14 +1583,14 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
                               shape: BoxShape.circle,
                               gradient: RadialGradient(
                                 colors: [
-                                  const Color(0xFFFF007A).withOpacity(0.55),
-                                  const Color(0xFFFF007A).withOpacity(0.12),
+                                  const Color(0xFFFF3D9A).withOpacity(0.55),
+                                  const Color(0xFFB45CFF).withOpacity(0.14),
                                   Colors.transparent,
                                 ],
                               ),
                               boxShadow: [
                                 BoxShadow(
-                                  color: const Color(0xFFFF2A85).withOpacity(0.55),
+                                  color: const Color(0xFFFF3D9A).withOpacity(0.45),
                                   blurRadius: 48,
                                   spreadRadius: 12,
                                 ),
@@ -1489,14 +1599,16 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
                             child: Column(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                const Icon(
-                                  Icons.favorite_rounded,
-                                  color: Color(0xFFFF2A85),
-                                  size: 84,
+                                GhostStickerArtwork(
+                                  sticker: GhostStickerCatalog.findById(
+                                      'love_beating_heart'),
+                                  size: 112,
+                                  reducedMotion: GhostTouchPreferencesService
+                                      .instance.current.reducedMotion,
                                 ),
                                 const SizedBox(height: 6),
                                 Text(
-                                  s.tr('❤️‍🔥 تپش قلب زنده', '❤️‍🔥 Live Heartbeat'),
+                                  s.tr('تپش قلب زنده', 'Live Heartbeat'),
                                   style: const TextStyle(
                                     color: Colors.white,
                                     fontSize: 13,
@@ -1719,40 +1831,75 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
                   ),
                 ),
               ),
+            ] else if (msg.contentType == ChatContentType.flashCard &&
+                msg.cardDataJson != null) ...[
+              GestureDetector(
+                onTap: () => setState(() => _activeFlashHologram = msg),
+                onDoubleTap: _sendHeartbeatPulse,
+                child: HolographicCardRenderer(
+                  data: FlashCardData.fromJsonString(msg.cardDataJson) ??
+                      FlashCardData(text: msg.text),
+                  isFa: s.isFa,
+                  compact: true,
+                  reducedMotion:
+                      GhostTouchPreferencesService.instance.current.reducedMotion,
+                ),
+              ),
             ] else if (msg.contentType == ChatContentType.sticker && sticker != null) ...[
-              Center(
-                child: Column(
-                  children: [
-                    Text(sticker.emoji, style: const TextStyle(fontSize: 54)),
-                    const SizedBox(height: 4),
-                    Text(
-                      s.isFa ? sticker.titleFa : sticker.titleEn,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
+              GestureDetector(
+                onTap: () => setState(() => _activeFlashHologram = msg),
+                onDoubleTap: _sendHeartbeatPulse,
+                child: Center(
+                  child: Column(
+                    children: [
+                      GhostStickerArtwork(
+                        sticker: sticker.ghostDef,
+                        size: 80,
+                        reducedMotion: GhostTouchPreferencesService
+                            .instance.current.reducedMotion,
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 4),
+                      Text(
+                        s.isFa ? sticker.titleFa : sticker.titleEn,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12.5,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ] else if ((msg.contentType == ChatContentType.drawing ||
                     msg.contentType == ChatContentType.image) &&
                 msg.mediaBase64 != null) ...[
               GestureDetector(
-                onTap: () => _openImageLightbox(msg.mediaBase64!),
+                onTap: () => _openImageLightbox(msg.id, msg.mediaBase64!),
+                onDoubleTap: _sendHeartbeatPulse,
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(12),
                   child: Container(
                     color: const Color(0xFF09090D),
                     constraints: const BoxConstraints(maxHeight: 230),
-                    child: Image.memory(
-                      base64Decode(msg.mediaBase64!),
-                      fit: BoxFit.contain,
-                      errorBuilder: (_, __, ___) => const Icon(
-                        Icons.broken_image_outlined,
-                        color: Colors.white54,
-                      ),
+                    child: Builder(
+                      builder: (_) {
+                        final bytes = _getDecodedMedia(msg.id, msg.mediaBase64!);
+                        if (bytes == null) {
+                          return const Icon(
+                            Icons.broken_image_outlined,
+                            color: Colors.white54,
+                          );
+                        }
+                        return Image.memory(
+                          bytes,
+                          fit: BoxFit.contain,
+                          errorBuilder: (_, __, ___) => const Icon(
+                            Icons.broken_image_outlined,
+                            color: Colors.white54,
+                          ),
+                        );
+                      },
                     ),
                   ),
                 ),

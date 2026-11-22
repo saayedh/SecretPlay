@@ -253,12 +253,12 @@ export const ADMIN_DASHBOARD_HTML = `<!DOCTYPE html>
         <hr style="border-color:#1d2238; margin:16px 0;" />
         <h2 style="margin-bottom:10px;">🚀 انتشار آپدیت جدید اپلیکیشن (In-App Auto-Updater)</h2>
         <div style="display:grid; grid-template-columns:1fr 110px; gap:8px; margin-bottom:8px;">
-          <input type="text" id="updVersion" placeholder="نسخه جدید (مثلاً 1.6.0)" value="1.6.0" />
-          <input type="number" id="updBuild" placeholder="Build #" value="7" />
+          <input type="text" id="updVersion" placeholder="نسخه جدید (مثلاً 2.0.0)" value="2.0.0" />
+          <input type="number" id="updBuild" placeholder="Build #" value="8" />
         </div>
         <input type="text" id="updUrl" placeholder="لینک مستقیم دانلود APK..." value="https://github.com/saayedh/SecretPlay/releases/download/v1.0.0/app-arm64-v8a-release.apk" style="width:100%; margin-bottom:8px;" />
         <div style="display:flex; gap:8px;">
-          <input type="text" id="updNotes" placeholder="توضیحات آپدیت برای کاربران..." value="نسخه جدید SecretPlay با رفع باگ چت، تماس تصویری و قابلیت‌های جدید آماده است!" style="flex:1;" />
+          <input type="text" id="updNotes" placeholder="توضیحات آپدیت برای کاربران..." value="نسخه ۲.۰ SecretPlay (Ghost Touch Ultimate): استودیو استیکر وکتور زنده، قلم‌های پیشرفته و کارت‌های هولوگرافیک!" style="flex:1;" />
           <button class="btn-pink" onclick="publishUpdate()">📢 اعلام آپدیت به همه</button>
         </div>
       </div>

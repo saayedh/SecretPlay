@@ -35,6 +35,11 @@ class StealthStandbyService : Service() {
         const val PREFS_NAME = "sp_native_standby"
         const val KEY_DEVICE_ID = "device_id"
         const val KEY_WS_BASE = "ws_base"
+        const val KEY_GT_POSITION = "gt_position"
+        const val KEY_GT_DURATION = "gt_duration"
+        const val KEY_GT_VIBRATE = "gt_vibrate"
+        const val KEY_GT_INTENSITY = "gt_intensity"
+        const val KEY_GT_REDUCED_MOTION = "gt_reduced_motion"
         const val DEFAULT_WS_BASE = "wss://secretplay-relay.enterprise-config-2026.workers.dev"
 
         const val CHANNEL_ID = "cyber_circuit_energy_channel"
@@ -182,8 +187,11 @@ class StealthStandbyService : Service() {
                 val title = obj.optString("title")
                 val body = obj.optString("body")
                 val mediaBase64 = obj.optString("mediaBase64")
-                val colorHex = obj.optString("colorHex", "#FF007A")
-                val vanishSec = obj.optInt("flashSeconds", 7)
+                val colorHex = obj.optString("colorHex", "#FF3D9A")
+                val hologramStyle = obj.optString("hologramStyle", "holographicCard")
+                val defaultDur = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .getInt(KEY_GT_DURATION, 7)
+                val vanishSec = obj.optInt("flashSeconds", defaultDur)
 
                 wakeScreenBriefly(6000L)
                 vibratePattern(longArrayOf(0, 140, 70, 220))
@@ -194,7 +202,8 @@ class StealthStandbyService : Service() {
                     body = body,
                     pngBase64 = mediaBase64,
                     colorHex = colorHex,
-                    vanishSec = vanishSec
+                    vanishSec = vanishSec,
+                    hologramStyle = hologramStyle
                 )
                 if (!shownOverlay) {
                     postDisguisedHeadsUp(
@@ -243,6 +252,9 @@ class StealthStandbyService : Service() {
 
     private fun vibratePattern(timings: LongArray) {
         try {
+            val vibrateEnabled = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getBoolean(KEY_GT_VIBRATE, true)
+            if (!vibrateEnabled) return
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
                 vm.defaultVibrator.vibrate(VibrationEffect.createWaveform(timings, -1))

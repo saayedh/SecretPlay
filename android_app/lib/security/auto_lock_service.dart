@@ -201,6 +201,13 @@ class AutoLockService with WidgetsBindingObserver {
     }
   }
 
+  Future<void> syncGhostTouchNativePrefs(Map<String, dynamic> prefs) async {
+    if (kIsWeb) return;
+    try {
+      await _securityChannel.invokeMethod('syncGhostTouchPrefs', prefs);
+    } catch (_) {}
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);

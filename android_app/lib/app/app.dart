@@ -8,6 +8,9 @@ import '../core/constants.dart';
 import '../core/theme.dart';
 import '../chat/chat_message.dart';
 import '../chat/widgets/flash_hologram_overlay.dart';
+import '../ghost_touch/models/hologram_models.dart';
+import '../ghost_touch/stickers/ghost_sticker_catalog.dart';
+import '../ghost_touch/stickers/ghost_sticker_painter.dart';
 import '../security/auto_lock_service.dart';
 import '../security/keystore_service.dart';
 import '../game/screens/game_home_screen.dart';
@@ -46,6 +49,7 @@ class _SecretPlayAppState extends ConsumerState<SecretPlayApp> with WidgetsBindi
     WidgetsBinding.instance.addObserver(this);
     _autoLockService.startObserving();
     _autoLockService.addLockListener(_handleGlobalLock);
+    unawaited(GhostTouchPreferencesService.instance.load());
     _initGlobalStandbyAndInbox();
   }
 
@@ -157,15 +161,30 @@ class _SecretPlayAppState extends ConsumerState<SecretPlayApp> with WidgetsBindi
         final media = map['mediaBase64'] as String?;
         final body = map['body'] as String? ?? map['title'] as String? ?? '';
         final emoji = map['emoji'] as String? ?? '';
-        final cType = (media != null && media.isNotEmpty)
-            ? ChatContentType.drawing
-            : ChatContentType.text;
+        final stickerId = map['stickerId'] as String?;
+        final holoStr = map['hologramStyle'] as String?;
+        final cardDataJson = map['cardDataJson'] as String?;
+        final flashSec = (map['flashSeconds'] as int?) ??
+            GhostTouchPreferencesService.instance.current.displayDurationSec;
+        final cType = (cardDataJson != null && cardDataJson.isNotEmpty)
+            ? ChatContentType.flashCard
+            : ((media != null && media.isNotEmpty)
+                ? ChatContentType.drawing
+                : ((stickerId != null && stickerId.isNotEmpty)
+                    ? ChatContentType.sticker
+                    : ChatContentType.text));
         final msg = EphemeralChatMessage(
           id: eventId.isNotEmpty ? eventId : null,
           senderDeviceId: map['senderDeviceId'] as String? ?? 'peer',
-          text: emoji.isNotEmpty ? '$emoji  $body'.trim() : body,
+          text: emoji.isNotEmpty && stickerId == null ? '$emoji  $body'.trim() : body,
           contentType: cType,
           mediaBase64: (media != null && media.isNotEmpty) ? media : null,
+          stickerId: (stickerId != null && stickerId.isNotEmpty) ? stickerId : null,
+          hologramStyle: (holoStr != null && holoStr.isNotEmpty) ? holoStr : null,
+          cardDataJson: (cardDataJson != null && cardDataJson.isNotEmpty)
+              ? cardDataJson
+              : null,
+          displayDurationSec: flashSec,
           isFlashScreen: true,
           timestamp: DateTime.now().millisecondsSinceEpoch,
           isMe: false,
@@ -301,26 +320,31 @@ class _SecretPlayAppState extends ConsumerState<SecretPlayApp> with WidgetsBindi
                           shape: BoxShape.circle,
                           gradient: RadialGradient(
                             colors: [
-                              const Color(0xFFFF007A).withOpacity(0.55),
-                              const Color(0xFFFF007A).withOpacity(0.14),
+                              const Color(0xFFFF3D9A).withOpacity(0.55),
+                              const Color(0xFFB45CFF).withOpacity(0.16),
                               Colors.transparent,
                             ],
                           ),
                           boxShadow: [
                             BoxShadow(
-                              color: const Color(0xFFFF2A85).withOpacity(0.55),
+                              color: const Color(0xFFFF3D9A).withOpacity(0.45),
                               blurRadius: 48,
                               spreadRadius: 12,
                             ),
                           ],
                         ),
-                        child: const Column(
+                        child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(Icons.favorite_rounded, color: Color(0xFFFF2A85), size: 84),
-                            SizedBox(height: 6),
-                            Text(
-                              '❤️‍🔥 تپش قلب زنده',
+                            GhostStickerArtwork(
+                              sticker: GhostStickerCatalog.findById('love_beating_heart'),
+                              size: 112,
+                              reducedMotion: GhostTouchPreferencesService
+                                  .instance.current.reducedMotion,
+                            ),
+                            const SizedBox(height: 6),
+                            const Text(
+                              'تپش قلب زنده',
                               style: TextStyle(
                                 color: Colors.white,
                                 fontSize: 13,
@@ -339,6 +363,14 @@ class _SecretPlayAppState extends ConsumerState<SecretPlayApp> with WidgetsBindi
                 child: FlashHologramOverlay(
                   message: _globalFlashMessage!,
                   isFa: true,
+                  hologramStyle: _globalFlashMessage!.hologramStyle != null
+                      ? HologramStyleExt.parse(_globalFlashMessage!.hologramStyle)
+                      : null,
+                  cardData: _globalFlashMessage!.cardDataJson != null
+                      ? FlashCardData.fromJsonString(_globalFlashMessage!.cardDataJson)
+                      : null,
+                  autoVanishSeconds: _globalFlashMessage!.displayDurationSec ??
+                      GhostTouchPreferencesService.instance.current.displayDurationSec,
                   onDismiss: () {
                     if (mounted) setState(() => _globalFlashMessage = null);
                   },

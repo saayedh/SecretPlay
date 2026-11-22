@@ -258,6 +258,9 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
       isOneTimeVoice: old.isOneTimeVoice,
       isCyberPitch: old.isCyberPitch,
       voiceDurationSec: old.voiceDurationSec,
+      hologramStyle: old.hologramStyle,
+      cardDataJson: old.cardDataJson,
+      displayDurationSec: old.displayDurationSec,
     );
   }
 
@@ -300,6 +303,9 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
     bool isOneTimeVoice = false,
     bool isCyberPitch = false,
     int? voiceDurationSec,
+    String? hologramStyle,
+    String? cardDataJson,
+    int? displayDurationSec,
   }) async {
     if (contentType == ChatContentType.text && text.trim().isEmpty) return false;
     if (_peerPublicKeyBase64 == null || _myIdentityKeyPair == null) {
@@ -327,6 +333,9 @@ class ChatSessionNotifier extends StateNotifier<List<EphemeralChatMessage>> {
       isOneTimeVoice: isOneTimeVoice,
       isCyberPitch: isCyberPitch,
       voiceDurationSec: voiceDurationSec,
+      hologramStyle: hologramStyle,
+      cardDataJson: cardDataJson,
+      displayDurationSec: displayDurationSec,
       timestamp: now,
       isMe: true,
       status: MessageDeliveryStatus.sending,

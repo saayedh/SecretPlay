@@ -200,6 +200,14 @@ class KeystoreService {
     await _delete(key);
   }
 
+  Future<void> saveGhostTouchPrefsJson(String jsonStr) async {
+    await _write('sp_ghost_touch_prefs', jsonStr);
+  }
+
+  Future<String?> getGhostTouchPrefsJson() async {
+    return await _read('sp_ghost_touch_prefs');
+  }
+
   Future<void> revokePairing() async {
     await _delete(AppConstants.keyPeerDeviceId);
     await _delete(AppConstants.keyPeerPublicKey);

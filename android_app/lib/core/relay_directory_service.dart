@@ -77,6 +77,9 @@ class RelayDirectoryService {
     String? mediaBase64,
     int flashSeconds = 7,
     String? roomToken,
+    String? hologramStyle,
+    String? cardDataJson,
+    String? stickerId,
   }) async {
     final target = recipientDeviceId.trim();
     if (target.isEmpty || target == 'peer') return false;
@@ -92,6 +95,10 @@ class RelayDirectoryService {
         'mediaBase64': mediaBase64,
       'flashSeconds': flashSeconds,
       if (roomToken != null && roomToken.isNotEmpty) 'roomToken': roomToken,
+      if (hologramStyle != null && hologramStyle.isNotEmpty) 'hologramStyle': hologramStyle,
+      if (cardDataJson != null && cardDataJson.isNotEmpty && cardDataJson.length <= 8000)
+        'cardDataJson': cardDataJson,
+      if (stickerId != null && stickerId.isNotEmpty) 'stickerId': stickerId,
     };
     final res = await relayHttpPost('${AppConstants.cloudflareHttpBase}/inbox/push', payload);
     return res != null;

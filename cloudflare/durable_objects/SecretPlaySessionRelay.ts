@@ -489,9 +489,12 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
         title: typeof body.title === 'string' ? body.title : '',
         body: typeof body.body === 'string' ? body.body : '',
         emoji: typeof body.emoji === 'string' ? body.emoji : '',
-        colorHex: typeof body.colorHex === 'string' ? body.colorHex : '#FF007A',
+        colorHex: typeof body.colorHex === 'string' ? body.colorHex : '#FF3D9A',
         mediaBase64: typeof body.mediaBase64 === 'string' ? body.mediaBase64 : '',
         flashSeconds: typeof body.flashSeconds === 'number' ? body.flashSeconds : 7,
+        hologramStyle: typeof body.hologramStyle === 'string' ? body.hologramStyle : '',
+        cardDataJson: typeof body.cardDataJson === 'string' ? body.cardDataJson : '',
+        stickerId: typeof body.stickerId === 'string' ? body.stickerId : '',
         roomToken: typeof body.roomToken === 'string' ? body.roomToken : '',
         timestamp: now,
       };
@@ -1598,14 +1601,14 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
       const existing = [...cur] as unknown as AdminDeviceRow[];
 
       const latestUpdate = {
-        latestVersion: cfg.latest_version || '1.6.0',
-        latestBuild: cfg.latest_build || 7,
+        latestVersion: cfg.latest_version || '2.0.0',
+        latestBuild: cfg.latest_build || 8,
         downloadUrl:
           cfg.download_url ||
           'https://github.com/saayedh/SecretPlay/releases/download/v1.0.0/app-arm64-v8a-release.apk',
         releaseNotes:
           cfg.release_notes ||
-          'نسخه جدید SecretPlay با سرویس پس‌زمینه ۲۴ ساعته، نمایش شناور قلبک و نقاشی روی همه برنامه‌ها و صفحه قفل آماده است!',
+          'نسخه ۲.۰ SecretPlay (Ghost Touch Ultimate): بیش از ۶۶ استیکر وکتور زنده، استودیو طراحی حرفه‌ای، کارت هولوگرافیک ۱۲ قالبه و افکت‌های تعاملی!',
       };
 
       if (existing.length === 0) {
@@ -1710,14 +1713,14 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
     if (path === '/internal-admin/version' && request.method === 'GET') {
       const cfg = this.getAdminConfig();
       return Response.json({
-        latestVersion: cfg.latest_version || '1.6.0',
-        latestBuild: cfg.latest_build || 7,
+        latestVersion: cfg.latest_version || '2.0.0',
+        latestBuild: cfg.latest_build || 8,
         downloadUrl:
           cfg.download_url ||
           'https://github.com/saayedh/SecretPlay/releases/download/v1.0.0/app-arm64-v8a-release.apk',
         releaseNotes:
           cfg.release_notes ||
-          'نسخه جدید SecretPlay با سرویس پس‌زمینه ۲۴ ساعته، نمایش شناور قلبک و نقاشی روی همه برنامه‌ها و صفحه قفل آماده است!',
+          'نسخه ۲.۰ SecretPlay (Ghost Touch Ultimate): بیش از ۶۶ استیکر وکتور زنده، استودیو طراحی حرفه‌ای، کارت هولوگرافیک ۱۲ قالبه و افکت‌های تعاملی!',
         timestamp: now,
       });
     }

@@ -480,6 +480,22 @@ class MainActivity : FlutterFragmentActivity(), SensorEventListener {
                     val drawn = NativeOverlayRenderer.showFloatingHeartbeat(this)
                     result.success(drawn)
                 }
+                "syncGhostTouchPrefs" -> {
+                    val position = call.argument<String>("position") ?: "center"
+                    val durationSec = call.argument<Int>("displayDurationSec") ?: 7
+                    val vibrateEnabled = call.argument<Boolean>("vibrateEnabled") ?: true
+                    val intensity = (call.argument<Number>("effectIntensity")?.toFloat() ?: 0.85f)
+                    val reducedMotion = call.argument<Boolean>("reducedMotion") ?: false
+                    getSharedPreferences(StealthStandbyService.PREFS_NAME, Context.MODE_PRIVATE)
+                        .edit()
+                        .putString(StealthStandbyService.KEY_GT_POSITION, position)
+                        .putInt(StealthStandbyService.KEY_GT_DURATION, durationSec)
+                        .putBoolean(StealthStandbyService.KEY_GT_VIBRATE, vibrateEnabled)
+                        .putFloat(StealthStandbyService.KEY_GT_INTENSITY, intensity)
+                        .putBoolean(StealthStandbyService.KEY_GT_REDUCED_MOTION, reducedMotion)
+                        .apply()
+                    result.success(true)
+                }
                 "startVoiceCallService" -> {
                     requestCallAudioFocus()
                     val intent = Intent(this, VoiceCallService::class.java).apply {

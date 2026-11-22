@@ -14,6 +14,7 @@ enum ChatContentType {
   drawing,
   sticker,
   voice,
+  flashCard,
 }
 
 /// Ephemeral In-Memory Chat Message Model
@@ -31,6 +32,9 @@ class EphemeralChatMessage {
   final bool isOneTimeVoice;
   final bool isCyberPitch;
   final int? voiceDurationSec;
+  final String? hologramStyle;
+  final String? cardDataJson;
+  final int? displayDurationSec;
   final int timestamp;
   final bool isMe;
   final MessageDeliveryStatus status;
@@ -48,6 +52,9 @@ class EphemeralChatMessage {
     this.isOneTimeVoice = false,
     this.isCyberPitch = false,
     this.voiceDurationSec,
+    this.hologramStyle,
+    this.cardDataJson,
+    this.displayDurationSec,
     required this.timestamp,
     required this.isMe,
     this.status = MessageDeliveryStatus.sending,
@@ -70,6 +77,9 @@ class EphemeralChatMessage {
       isOneTimeVoice: isOneTimeVoice,
       isCyberPitch: isCyberPitch,
       voiceDurationSec: voiceDurationSec,
+      hologramStyle: hologramStyle,
+      cardDataJson: cardDataJson,
+      displayDurationSec: displayDurationSec,
       timestamp: timestamp,
       isMe: isMe,
       status: status ?? this.status,
@@ -84,6 +94,9 @@ class EphemeralChatMessage {
         if (mediaBase64 != null) 'mediaBase64': mediaBase64,
         if (stickerId != null) 'stickerId': stickerId,
         'isFlashScreen': isFlashScreen,
+        if (hologramStyle != null) 'hologramStyle': hologramStyle,
+        if (cardDataJson != null) 'cardDataJson': cardDataJson,
+        if (displayDurationSec != null) 'displayDurationSec': displayDurationSec,
         'timestamp': timestamp,
         'isMe': isMe,
         'status': status.name,
@@ -103,6 +116,9 @@ class EphemeralChatMessage {
       mediaBase64: json['mediaBase64'] as String?,
       stickerId: json['stickerId'] as String?,
       isFlashScreen: json['isFlashScreen'] == true,
+      hologramStyle: json['hologramStyle'] as String?,
+      cardDataJson: json['cardDataJson'] as String?,
+      displayDurationSec: json['displayDurationSec'] as int?,
       timestamp: (json['timestamp'] as int?) ?? DateTime.now().millisecondsSinceEpoch,
       isMe: json['isMe'] == true,
       status: MessageDeliveryStatus.values.firstWhere(
@@ -112,10 +128,12 @@ class EphemeralChatMessage {
     );
   }
 
-  /// Packs rich content (image/drawing/sticker/voice/flash/burn timer) into an E2EE JSON envelope
+  /// Packs rich content (image/drawing/sticker/flashCard/voice/flash/burn timer) into an E2EE JSON envelope
   String toEncryptedPayloadString() {
     if (contentType == ChatContentType.text &&
         !isFlashScreen &&
+        hologramStyle == null &&
+        cardDataJson == null &&
         (burnAfterSeconds == null || burnAfterSeconds == 0)) {
       return text;
     }
@@ -130,6 +148,9 @@ class EphemeralChatMessage {
       if (isOneTimeVoice) 'oneTime': true,
       if (isCyberPitch) 'cyberPitch': true,
       if (voiceDurationSec != null) 'dur': voiceDurationSec,
+      if (hologramStyle != null) 'holo': hologramStyle,
+      if (cardDataJson != null) 'card': cardDataJson,
+      if (displayDurationSec != null) 'dispSec': displayDurationSec,
     });
   }
 
@@ -165,6 +186,9 @@ class EphemeralChatMessage {
           isOneTimeVoice: map['oneTime'] == true,
           isCyberPitch: map['cyberPitch'] == true,
           voiceDurationSec: map['dur'] as int?,
+          hologramStyle: map['holo'] as String?,
+          cardDataJson: map['card'] as String?,
+          displayDurationSec: map['dispSec'] as int?,
           timestamp: timestamp,
           isMe: isMe,
           status: status,
