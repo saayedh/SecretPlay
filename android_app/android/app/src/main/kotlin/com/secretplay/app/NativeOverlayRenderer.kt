@@ -257,15 +257,15 @@ object NativeOverlayRenderer {
         mainHandler.post {
             try {
                 val prefs = readPrefs(context)
-                val (gravity, yOffset) = resolveGravityAndOffset(context, prefs.position)
+                val (overlayGravity, yOffset) = resolveGravityAndOffset(context, prefs.position)
                 val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
                 val container = LinearLayout(context).apply {
                     orientation = LinearLayout.VERTICAL
-                    gravity = Gravity.CENTER
+                    setGravity(Gravity.CENTER)
                     setPadding(dp(context, 18), dp(context, 14), dp(context, 18), dp(context, 16))
                     background = GradientDrawable(
-                        GradientDrawable.Orientation.TOP_LEFT_BOTTOM_RIGHT,
+                        GradientDrawable.Orientation.TL_BR,
                         intArrayOf(Color.parseColor("#E61A0D2E"), Color.parseColor("#EA080912"))
                     ).apply {
                         cornerRadius = dp(context, 32).toFloat()
@@ -294,7 +294,7 @@ object NativeOverlayRenderer {
                 container.addView(heartView)
                 container.addView(label)
 
-                val params = overlayParams(touchable = false, gravity = gravity, yOffset = yOffset)
+                val params = overlayParams(touchable = false, gravity = overlayGravity, yOffset = yOffset)
                 wm.addView(container, params)
 
                 if (!prefs.reducedMotion) {
@@ -401,15 +401,15 @@ object NativeOverlayRenderer {
             try {
                 val prefs = readPrefs(context)
                 val (accent, surfaceBg, styleBadge) = styleColors(hologramStyle, colorHex)
-                val (gravity, yOffset) = resolveGravityAndOffset(context, prefs.position)
+                val (overlayGravity, yOffset) = resolveGravityAndOffset(context, prefs.position)
                 val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
                 val card = LinearLayout(context).apply {
                     orientation = LinearLayout.VERTICAL
-                    gravity = Gravity.CENTER_HORIZONTAL
+                    setGravity(Gravity.CENTER_HORIZONTAL)
                     setPadding(dp(context, 20), dp(context, 16), dp(context, 20), dp(context, 18))
                     background = GradientDrawable(
-                        GradientDrawable.Orientation.TOP_LEFT_BOTTOM_RIGHT,
+                        GradientDrawable.Orientation.TL_BR,
                         intArrayOf(surfaceBg, Color.parseColor("#F4080912"))
                     ).apply {
                         cornerRadius = dp(context, 26).toFloat()
@@ -530,7 +530,7 @@ object NativeOverlayRenderer {
                     timerBadge.text = if (paused) "⏸ ${remaining}s" else "${remaining}s"
                 }
 
-                val params = overlayParams(touchable = true, gravity = gravity, yOffset = yOffset)
+                val params = overlayParams(touchable = true, gravity = overlayGravity, yOffset = yOffset)
                 wm.addView(card, params)
 
                 if (!prefs.reducedMotion) {
