@@ -456,59 +456,74 @@ class _GhostStickerStudioState extends State<GhostStickerStudio>
                                   ),
                                   const SizedBox(height: 8),
                                   Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceBetween,
                                     children: [
                                       // Flash toggle pill
-                                      InkWell(
-                                        onTap: () {
-                                          HapticFeedback.selectionClick();
-                                          setState(() => _flashOnScreen =
-                                              !_flashOnScreen);
-                                        },
-                                        borderRadius: BorderRadius.circular(12),
-                                        child: AnimatedContainer(
-                                          duration: GhostMotion.microTap,
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 9, vertical: 5),
-                                          decoration: BoxDecoration(
-                                            color: _flashOnScreen
-                                                ? GhostPalette.neonPink
-                                                    .withOpacity(0.24)
-                                                : Colors.white
-                                                    .withOpacity(0.06),
+                                      Flexible(
+                                        child: FittedBox(
+                                          fit: BoxFit.scaleDown,
+                                          alignment:
+                                              AlignmentDirectional.centerStart,
+                                          child: InkWell(
+                                            onTap: () {
+                                              HapticFeedback.selectionClick();
+                                              setState(() => _flashOnScreen =
+                                                  !_flashOnScreen);
+                                            },
                                             borderRadius:
                                                 BorderRadius.circular(12),
-                                            border: Border.all(
-                                              color: _flashOnScreen
-                                                  ? GhostPalette.neonPink
-                                                  : Colors.white12,
-                                            ),
-                                          ),
-                                          child: Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              Icon(
-                                                Icons.bolt_rounded,
-                                                size: 14,
+                                            child: AnimatedContainer(
+                                              duration: GhostMotion.microTap,
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                      horizontal: 9,
+                                                      vertical: 5),
+                                              decoration: BoxDecoration(
                                                 color: _flashOnScreen
                                                     ? GhostPalette.neonPink
-                                                    : Colors.white54,
-                                              ),
-                                              const SizedBox(width: 4),
-                                              Text(
-                                                isFa ? 'فلش صفحه' : 'Flash',
-                                                style: TextStyle(
+                                                        .withOpacity(0.24)
+                                                    : Colors.white
+                                                        .withOpacity(0.06),
+                                                borderRadius:
+                                                    BorderRadius.circular(12),
+                                                border: Border.all(
                                                   color: _flashOnScreen
-                                                      ? Colors.white
-                                                      : Colors.white60,
-                                                  fontSize: 11,
-                                                  fontWeight: FontWeight.w700,
+                                                      ? GhostPalette.neonPink
+                                                      : Colors.white12,
                                                 ),
                                               ),
-                                            ],
+                                              child: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  Icon(
+                                                    Icons.bolt_rounded,
+                                                    size: 14,
+                                                    color: _flashOnScreen
+                                                        ? GhostPalette.neonPink
+                                                        : Colors.white54,
+                                                  ),
+                                                  const SizedBox(width: 4),
+                                                  Text(
+                                                    isFa
+                                                        ? 'فلش صفحه'
+                                                        : 'Flash',
+                                                    style: TextStyle(
+                                                      color: _flashOnScreen
+                                                          ? Colors.white
+                                                          : Colors.white60,
+                                                      fontSize: 11,
+                                                      fontWeight:
+                                                          FontWeight.w700,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
                                           ),
                                         ),
                                       ),
-                                      const Spacer(),
+                                      const SizedBox(width: 6),
                                       // Primary Send CTA
                                       InkWell(
                                         onTap: _sendSelected,

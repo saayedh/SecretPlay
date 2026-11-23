@@ -542,51 +542,73 @@ class _UltimateDrawingStudioState extends State<UltimateDrawingStudio>
                 child: Row(
                   children: [
                     IconButton(
+                      visualDensity: VisualDensity.compact,
                       icon: const Icon(Icons.close_rounded, color: Colors.white70),
                       onPressed: () => Navigator.pop(context),
                     ),
-                    // Interaction mode pills
-                    _modeIconBtn(StudioInteractionMode.draw, Icons.brush_rounded,
-                        isFa ? 'طراحی' : 'Draw'),
-                    const SizedBox(width: 4),
-                    _modeIconBtn(StudioInteractionMode.select, Icons.open_with_rounded,
-                        isFa ? 'انتخاب' : 'Select'),
-                    const SizedBox(width: 4),
-                    _modeIconBtn(StudioInteractionMode.panZoom, Icons.zoom_in_rounded,
-                        isFa ? 'زوم' : 'Zoom'),
-                    const Spacer(),
-                    IconButton(
-                      tooltip: isFa ? 'بازگشت' : 'Undo',
-                      icon: Icon(
-                        Icons.undo_rounded,
-                        color: _undoStack.isNotEmpty ? Colors.white : Colors.white24,
+                    Expanded(
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            // Interaction mode pills
+                            _modeIconBtn(StudioInteractionMode.draw,
+                                Icons.brush_rounded, isFa ? 'طراحی' : 'Draw'),
+                            const SizedBox(width: 4),
+                            _modeIconBtn(StudioInteractionMode.select,
+                                Icons.open_with_rounded, isFa ? 'انتخاب' : 'Select'),
+                            const SizedBox(width: 4),
+                            _modeIconBtn(StudioInteractionMode.panZoom,
+                                Icons.zoom_in_rounded, isFa ? 'زوم' : 'Zoom'),
+                            const SizedBox(width: 4),
+                            IconButton(
+                              visualDensity: VisualDensity.compact,
+                              tooltip: isFa ? 'بازگشت' : 'Undo',
+                              icon: Icon(
+                                Icons.undo_rounded,
+                                color: _undoStack.isNotEmpty
+                                    ? Colors.white
+                                    : Colors.white24,
+                              ),
+                              onPressed: _undoStack.isNotEmpty ? _undo : null,
+                            ),
+                            IconButton(
+                              visualDensity: VisualDensity.compact,
+                              tooltip: isFa ? 'تکرار' : 'Redo',
+                              icon: Icon(
+                                Icons.redo_rounded,
+                                color: _redoStack.isNotEmpty
+                                    ? Colors.white
+                                    : Colors.white24,
+                              ),
+                              onPressed: _redoStack.isNotEmpty ? _redo : null,
+                            ),
+                            IconButton(
+                              visualDensity: VisualDensity.compact,
+                              tooltip: isFa ? 'پاک کردن' : 'Clear',
+                              icon: Icon(
+                                Icons.delete_sweep_rounded,
+                                color: _elements.isNotEmpty
+                                    ? GhostPalette.neonPink
+                                    : Colors.white24,
+                              ),
+                              onPressed:
+                                  _elements.isNotEmpty ? _clearCanvas : null,
+                            ),
+                            IconButton(
+                              visualDensity: VisualDensity.compact,
+                              tooltip: isFa ? 'ذخیره امضا' : 'Save Signature',
+                              icon: const Icon(Icons.bookmark_add_rounded,
+                                  color: GhostPalette.electricCyan),
+                              onPressed:
+                                  _elements.isEmpty ? null : _saveAsSignature,
+                            ),
+                          ],
+                        ),
                       ),
-                      onPressed: _undoStack.isNotEmpty ? _undo : null,
                     ),
-                    IconButton(
-                      tooltip: isFa ? 'تکرار' : 'Redo',
-                      icon: Icon(
-                        Icons.redo_rounded,
-                        color: _redoStack.isNotEmpty ? Colors.white : Colors.white24,
-                      ),
-                      onPressed: _redoStack.isNotEmpty ? _redo : null,
-                    ),
-                    IconButton(
-                      tooltip: isFa ? 'پاک کردن' : 'Clear',
-                      icon: Icon(
-                        Icons.delete_sweep_rounded,
-                        color: _elements.isNotEmpty
-                            ? GhostPalette.neonPink
-                            : Colors.white24,
-                      ),
-                      onPressed: _elements.isNotEmpty ? _clearCanvas : null,
-                    ),
-                    IconButton(
-                      tooltip: isFa ? 'ذخیره امضا' : 'Save Signature',
-                      icon: const Icon(Icons.bookmark_add_rounded,
-                          color: GhostPalette.electricCyan),
-                      onPressed: _elements.isEmpty ? null : _saveAsSignature,
-                    ),
+                    const SizedBox(width: 6),
                     InkWell(
                       onTap: (_elements.isEmpty || _sending) ? null : _exportAndSend,
                       borderRadius: BorderRadius.circular(14),

@@ -1685,59 +1685,70 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
     final isPlayingVoice = _playingVoiceIds.contains(msg.id);
 
     final isSticker = msg.contentType == ChatContentType.sticker && sticker != null;
+    final isFlashCard =
+        msg.contentType == ChatContentType.flashCard && msg.cardDataJson != null;
 
     return Align(
       alignment: msg.isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
         margin: const EdgeInsets.only(bottom: 10),
         constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.78),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        padding: isFlashCard
+            ? const EdgeInsets.all(6)
+            : const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         decoration: BoxDecoration(
-          gradient: isSticker
-              ? LinearGradient(
-                  colors: [
-                    sticker.neonColor.withOpacity(0.24),
-                    const Color(0xFF121628).withOpacity(0.92),
-                  ],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                )
-              : (msg.isMe
-                  ? const LinearGradient(
-                      colors: [Color(0xFF007CF0), Color(0xFF00B4D8)],
+          color: isFlashCard ? const Color(0xFF0D0E1B).withOpacity(0.65) : null,
+          gradient: isFlashCard
+              ? null
+              : (isSticker
+                  ? LinearGradient(
+                      colors: [
+                        sticker.neonColor.withOpacity(0.24),
+                        const Color(0xFF121628).withOpacity(0.92),
+                      ],
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
                     )
-                  : const LinearGradient(
-                      colors: [Color(0xFF15192B), Color(0xFF1D233B)],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    )),
+                  : (msg.isMe
+                      ? const LinearGradient(
+                          colors: [Color(0xFF007CF0), Color(0xFF00B4D8)],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        )
+                      : const LinearGradient(
+                          colors: [Color(0xFF15192B), Color(0xFF1D233B)],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ))),
           borderRadius: BorderRadius.only(
             topLeft: const Radius.circular(20),
             topRight: const Radius.circular(20),
             bottomLeft: Radius.circular(msg.isMe ? 20 : 5),
             bottomRight: Radius.circular(msg.isMe ? 5 : 20),
           ),
-          boxShadow: [
-            BoxShadow(
-              color: (isSticker
-                      ? sticker.neonColor
-                      : (msg.isMe ? const Color(0xFF0099FF) : Colors.black))
-                  .withOpacity(isSticker ? 0.22 : 0.20),
-              blurRadius: 14,
-              offset: const Offset(0, 4),
-            ),
-          ],
-          border: msg.isFlashScreen
-              ? Border.all(color: const Color(0xFFFF007A), width: 1.6)
-              : (remainingBurnSec != null
-                  ? Border.all(color: const Color(0xFFFF9F0A), width: 1.5)
-                  : Border.all(
-                      color: isSticker
-                          ? sticker.neonColor.withOpacity(0.6)
-                          : Colors.white.withOpacity(msg.isMe ? 0.14 : 0.08),
-                    )),
+          boxShadow: isFlashCard
+              ? null
+              : [
+                  BoxShadow(
+                    color: (isSticker
+                            ? sticker.neonColor
+                            : (msg.isMe ? const Color(0xFF0099FF) : Colors.black))
+                        .withOpacity(isSticker ? 0.22 : 0.20),
+                    blurRadius: 14,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+          border: isFlashCard
+              ? null
+              : (msg.isFlashScreen
+                  ? Border.all(color: const Color(0xFFFF007A), width: 1.6)
+                  : (remainingBurnSec != null
+                      ? Border.all(color: const Color(0xFFFF9F0A), width: 1.5)
+                      : Border.all(
+                          color: isSticker
+                              ? sticker.neonColor.withOpacity(0.6)
+                              : Colors.white.withOpacity(msg.isMe ? 0.14 : 0.08),
+                        ))),
         ),
         child: Column(
           crossAxisAlignment: msg.isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,

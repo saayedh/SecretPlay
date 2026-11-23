@@ -1,13 +1,18 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:secretplay/chat/chat_message.dart';
 import 'package:secretplay/chat/widgets/cyber_sticker_sheet.dart';
+import 'package:secretplay/ghost_touch/cards/holographic_card_designer.dart';
 import 'package:secretplay/ghost_touch/cards/holographic_card_renderer.dart';
+import 'package:secretplay/ghost_touch/drawing/ultimate_drawing_studio.dart';
 import 'package:secretplay/ghost_touch/ghost_touch_theme.dart';
 import 'package:secretplay/ghost_touch/models/hologram_models.dart';
 import 'package:secretplay/ghost_touch/overlay/floating_hologram_experience.dart';
 import 'package:secretplay/ghost_touch/stickers/ghost_sticker_catalog.dart';
 import 'package:secretplay/ghost_touch/stickers/ghost_sticker_painter.dart';
+import 'package:secretplay/ghost_touch/stickers/ghost_sticker_studio.dart';
 
 void main() {
   group('GhostStickerCatalog', () {
@@ -39,6 +44,21 @@ void main() {
         expect(resolved.id, isNotEmpty);
         final compat = CyberStickerCatalog.findById(legacyId);
         expect(compat.id, equals(resolved.id));
+      }
+    });
+
+    test('all 66 GhostStickerPainter motifs paint cleanly onto Canvas without errors',
+        () {
+      const progressPoints = [0.0, 0.25, 0.5, 0.85];
+      for (final st in GhostStickerCatalog.all) {
+        for (final p in progressPoints) {
+          final recorder = ui.PictureRecorder();
+          final canvas = Canvas(recorder);
+          GhostStickerPainter(sticker: st, progress: p)
+              .paint(canvas, const Size(96, 96));
+          final pic = recorder.endRecording();
+          pic.dispose();
+        }
       }
     });
   });
@@ -270,6 +290,77 @@ void main() {
       await tester.tap(find.byIcon(Icons.close_rounded));
       expect(dismissed, isTrue);
       expect(repliedSticker, isNull);
+
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('GhostStickerStudio renders cleanly on 390x844 viewport without overflow',
+        (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: GhostStickerStudio(isFa: true),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 200));
+
+      expect(find.text('استودیو استیکر هولوگرافیک'), findsOneWidget);
+      expect(find.text('شانسی!'), findsOneWidget);
+      await tester.tap(find.text('شانسی!'));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('UltimateDrawingStudio renders cleanly on 390x844 and switches tabs',
+        (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: UltimateDrawingStudio(isFa: true),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 200));
+
+      expect(find.text('قلم'), findsOneWidget);
+      await tester.tap(find.text('اشکال'));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('۲۲ شکل وکتور درخشان'), findsOneWidget);
+
+      await tester.tap(find.text('بوم/فلش'));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('فلش'), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('HolographicCardDesigner renders cleanly on 390x844 and switches tabs',
+        (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: HolographicCardDesigner(isFa: true),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 200));
+
+      expect(find.text('طراح کارت پیام هولوگرافیک'), findsOneWidget);
+      await tester.tap(find.text('متن و فونت'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.tap(find.text('افکت و فلش'));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.textContaining('نمایش هولوگرام فوری'), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox());
     });

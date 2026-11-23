@@ -27,7 +27,7 @@ export default {
       return new Response(
         JSON.stringify({
           service: 'SecretPlay Cloudflare E2EE Relay',
-          version: '1.2.0',
+          version: '2.0.0',
           e2ee: true,
           zeroStorage: true,
           freeTierMode: true,

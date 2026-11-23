@@ -595,41 +595,44 @@ class _HolographicCardDesignerState extends State<HolographicCardDesigner>
               ),
             ),
             const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [5, 7, 10, 15, 20].map((sec) {
-                final active = _card.durationSec == sec;
-                return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
-                  child: InkWell(
-                    onTap: () => setState(
-                        () => _card = _card.copyWith(durationSec: sec)),
-                    borderRadius: BorderRadius.circular(10),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: active
-                            ? GhostPalette.neonGreen.withOpacity(0.24)
-                            : Colors.white.withOpacity(0.06),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [5, 7, 10, 15, 20].map((sec) {
+                  final active = _card.durationSec == sec;
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: InkWell(
+                      onTap: () => setState(
+                          () => _card = _card.copyWith(durationSec: sec)),
+                      borderRadius: BorderRadius.circular(10),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
                           color: active
-                              ? GhostPalette.neonGreen
-                              : Colors.white12,
+                              ? GhostPalette.neonGreen.withOpacity(0.24)
+                              : Colors.white.withOpacity(0.06),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: active
+                                ? GhostPalette.neonGreen
+                                : Colors.white12,
+                          ),
+                        ),
+                        child: Text(
+                          isFa ? '$sec ثانیه' : '${sec}s',
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold),
                         ),
                       ),
-                      child: Text(
-                        isFa ? '$sec ثانیه' : '${sec}s',
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold),
-                      ),
                     ),
-                  ),
-                );
-              }).toList(),
+                  );
+                }).toList(),
+              ),
             ),
           ],
         );

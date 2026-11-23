@@ -307,6 +307,7 @@ class GhostStickerPainter extends CustomPainter {
               c.translate(-r, 0),
               c.translate(r, 0),
               [p1, p2, Colors.white, p1],
+              const [0.0, 0.33, 0.67, 1.0],
             )
             ..style = PaintingStyle.stroke
             ..strokeWidth = r * 0.09,
@@ -328,6 +329,7 @@ class GhostStickerPainter extends CustomPainter {
               c.translate(-r, -r),
               c.translate(r, r),
               [p1.withOpacity(0.48), p2.withOpacity(0.22), Colors.white.withOpacity(0.18)],
+              const [0.0, 0.5, 1.0],
             ),
         );
         canvas.drawPath(
@@ -530,6 +532,7 @@ class GhostStickerPainter extends CustomPainter {
               c.translate(-r * 0.5, -r * 0.5),
               c.translate(r * 0.5, r * 0.5),
               [p2, p1, const Color(0xFF0A1026)],
+              const [0.0, 0.55, 1.0],
             ),
         );
         // Front ring
@@ -564,7 +567,12 @@ class GhostStickerPainter extends CustomPainter {
         canvas.drawPath(
           moonPath,
           Paint()
-            ..shader = ui.Gradient.linear(c.translate(-r, -r), c.translate(r, r), [p1, Colors.white, p2]),
+            ..shader = ui.Gradient.linear(
+              c.translate(-r, -r),
+              c.translate(r, r),
+              [p1, Colors.white, p2],
+              const [0.0, 0.5, 1.0],
+            ),
         );
         _drawSparkles(canvas, c.translate(r * 0.35, -r * 0.25), r * 0.45, p1, 3);
         break;
@@ -579,7 +587,12 @@ class GhostStickerPainter extends CustomPainter {
           starPos,
           starPos.translate(-r * 0.85, r * 0.65),
           Paint()
-            ..shader = ui.Gradient.linear(starPos, starPos.translate(-r * 0.85, r * 0.65), [p2, p1, Colors.transparent])
+            ..shader = ui.Gradient.linear(
+              starPos,
+              starPos.translate(-r * 0.85, r * 0.65),
+              [p2, p1, Colors.transparent],
+              const [0.0, 0.45, 1.0],
+            )
             ..strokeWidth = r * 0.18
             ..strokeCap = StrokeCap.round,
         );
@@ -731,7 +744,13 @@ class GhostStickerPainter extends CustomPainter {
           ..close();
         canvas.drawPath(
           poly,
-          Paint()..shader = ui.Gradient.linear(c.translate(-r, -r), c.translate(r, r), [Colors.white, p2, p1]),
+          Paint()
+            ..shader = ui.Gradient.linear(
+              c.translate(-r, -r),
+              c.translate(r, r),
+              [Colors.white, p2, p1],
+              const [0.0, 0.45, 1.0],
+            ),
         );
         canvas.drawLine(c.translate(0, -r * 0.92), c.translate(0, r * 0.95), Paint()..color = Colors.white.withOpacity(0.65)..strokeWidth = 1.6);
         break;
@@ -944,7 +963,12 @@ class GhostStickerPainter extends CustomPainter {
           c,
           r * 0.62,
           Paint()
-            ..shader = ui.Gradient.radial(c, r * 0.65, [Colors.white.withOpacity(0.55), p1, p2.withOpacity(0.35)]),
+            ..shader = ui.Gradient.radial(
+              c,
+              r * 0.65,
+              [Colors.white.withOpacity(0.55), p1, p2.withOpacity(0.35)],
+              const [0.0, 0.5, 1.0],
+            ),
         );
         _drawEnergyRings(canvas, c, r, p2, p1, count: 2);
         _drawGradientHeart(canvas, c, r * 0.32, Colors.white, p2, glow: true);
@@ -969,7 +993,17 @@ class GhostStickerPainter extends CustomPainter {
 
       case StickerMotif.positiveEnergyCoil:
         _drawBurstRays(canvas, c, r * 0.95, p1, p2, 10);
-        canvas.drawCircle(c, r * 0.46, Paint()..shader = ui.Gradient.radial(c, r * 0.46, [Colors.white, p1, p2]));
+        canvas.drawCircle(
+          c,
+          r * 0.46,
+          Paint()
+            ..shader = ui.Gradient.radial(
+              c,
+              r * 0.46,
+              [Colors.white, p1, p2],
+              const [0.0, 0.45, 1.0],
+            ),
+        );
         break;
 
       case StickerMotif.littleSurpriseBox:
@@ -1299,7 +1333,16 @@ class GhostStickerPainter extends CustomPainter {
         ..color = p1.withOpacity(0.55)
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 7),
     );
-    canvas.drawPath(bolt, Paint()..shader = ui.Gradient.linear(c.translate(0, -r), c.translate(0, r), [Colors.white, p1, p2]));
+    canvas.drawPath(
+      bolt,
+      Paint()
+        ..shader = ui.Gradient.linear(
+          c.translate(0, -r),
+          c.translate(0, r),
+          [Colors.white, p1, p2],
+          const [0.0, 0.45, 1.0],
+        ),
+    );
   }
 
   void _drawBurstRays(Canvas canvas, Offset c, double r, Color p1, Color p2, int count,
