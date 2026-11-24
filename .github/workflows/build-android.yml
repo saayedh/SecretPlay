@@ -59,15 +59,61 @@ jobs:
           path: android_app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
 
-      - name: Create GitHub Release v1.0.0 with Direct APK Downloads
-        if: github.ref == 'refs/heads/main'
+      - name: Upload All Compiled Release APK Variants
+        uses: actions/upload-artifact@v4
+        with:
+          name: SecretPlay-Release-All-APKs
+          path: android_app/build/app/outputs/flutter-apk/app-*-release.apk
+          if-no-files-found: error
+
+      - name: Publish Versioned GitHub Release (Keep All Versions)
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release delete v1.0.0 --yes --cleanup-tag || true
-          gh release create v1.0.0 \
-            android_app/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk \
-            android_app/build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk \
-            android_app/build/app/outputs/flutter-apk/app-release.apk \
-            --title "SecretPlay v1.0.0 (Android APK)" \
-            --notes "SecretPlay Encrypted Dual-Persona 2-Device Android Application (Cloudflare Free-Tier + Local Server + 4-Digit PIN + Shared Token Auto-Pairing)"
+          VERSION_LINE=$(grep -E '^version:' android_app/pubspec.yaml | head -n1 | awk '{print $2}' | tr -d '\r')
+          APP_VERSION="${VERSION_LINE%%+*}"
+          if [[ "$VERSION_LINE" == *"+"* ]]; then
+            BUILD_NUMBER="${VERSION_LINE##*+}"
+          else
+            BUILD_NUMBER="1"
+          fi
+          TAG="v${APP_VERSION}-b${BUILD_NUMBER}"
+          TITLE="SecretPlay v${APP_VERSION} (Build ${BUILD_NUMBER} - Android APK)"
+
+          APK_DIR="android_app/build/app/outputs/flutter-apk"
+          ASSETS=()
+          for name in app-arm64-v8a-release.apk app-armeabi-v7a-release.apk app-x86_64-release.apk app-release.apk; do
+            if [ -f "$APK_DIR/$name" ]; then
+              ASSETS+=("$APK_DIR/$name")
+            fi
+          done
+          if [ "${#ASSETS[@]}" -eq 0 ]; then
+            echo "No release APK files found in $APK_DIR" >&2
+            exit 1
+          fi
+
+          (cd "$APK_DIR" && sha256sum app-*-release.apk > SHA256SUMS.txt)
+          ASSETS+=("$APK_DIR/SHA256SUMS.txt")
+
+          NOTES_FILE="$(mktemp)"
+          cat > "$NOTES_FILE" <<EOF
+          ## SecretPlay Android Release v${APP_VERSION} (Build ${BUILD_NUMBER})
+
+          - **Commit:** \`${GITHUB_SHA::7}\`
+          - **Recommended (64-bit Phones):** \`app-arm64-v8a-release.apk\`
+          - **32-bit ARM Phones:** \`app-armeabi-v7a-release.apk\`
+          - **x86_64 / Emulators:** \`app-x86_64-release.apk\`
+          - **Universal (All ABIs):** \`app-release.apk\`
+          - **Checksums:** \`SHA256SUMS.txt\`
+
+          Encrypted Dual-Persona 2-Device Android Application (Ghost Touch Holographic System, E2EE Relay, Local LAN Mode & WebRTC).
+          EOF
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${ASSETS[@]}" --clobber
+            gh release edit "$TAG" --title "$TITLE" --notes-file "$NOTES_FILE" --latest
+          else
+            gh release create "$TAG" "${ASSETS[@]}" --target "$GITHUB_SHA" --title "$TITLE" --notes-file "$NOTES_FILE" --latest
+          fi
+          rm -f "$NOTES_FILE"
