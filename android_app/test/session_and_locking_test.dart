@@ -90,12 +90,12 @@ void main() {
     test('4. Dual-mode NetworkConfig defaults to Cloudflare Free-Tier URL, appends pairToken, and parses Local QR payloads', () {
       const initial = NetworkConfig();
       expect(initial.mode, NetworkMode.cloud);
-      expect(initial.activeWsUrl, 'wss://secretplay-relay.enterprise-config-2026.workers.dev/ws');
+      expect(initial.activeWsUrl, 'wss://secretplay-relay.jhadi1668.workers.dev/ws');
 
       final withToken = initial.copyWith(pairToken: 'SP-7492-K9');
       expect(
         withToken.activeWsUrl,
-        'wss://secretplay-relay.enterprise-config-2026.workers.dev/ws?token=SP-7492-K9',
+        'wss://secretplay-relay.jhadi1668.workers.dev/ws?token=SP-7492-K9',
       );
 
       final fromQr = initial.withLocalUrl('{"wsUrl":"ws://192.168.1.44:8787/ws","mode":"local"}');

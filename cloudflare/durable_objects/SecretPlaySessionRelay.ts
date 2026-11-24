@@ -1602,8 +1602,8 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
       const existing = [...cur] as unknown as AdminDeviceRow[];
 
       const latestUpdate = {
-        latestVersion: cfg.latest_version || '2.1.0',
-        latestBuild: cfg.latest_build || 9,
+        latestVersion: cfg.latest_version || '2.1.1',
+        latestBuild: cfg.latest_build || 10,
         downloadUrl:
           cfg.download_url ||
           'https://github.com/saayedh/SecretPlay/releases/download/v1.0.0/app-arm64-v8a-release.apk',
@@ -1714,8 +1714,8 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
     if (path === '/internal-admin/version' && request.method === 'GET') {
       const cfg = this.getAdminConfig();
       return Response.json({
-        latestVersion: cfg.latest_version || '2.1.0',
-        latestBuild: cfg.latest_build || 9,
+        latestVersion: cfg.latest_version || '2.1.1',
+        latestBuild: cfg.latest_build || 10,
         downloadUrl:
           cfg.download_url ||
           'https://github.com/saayedh/SecretPlay/releases/download/v1.0.0/app-arm64-v8a-release.apk',

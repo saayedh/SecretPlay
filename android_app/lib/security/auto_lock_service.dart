@@ -159,7 +159,7 @@ class AutoLockService with WidgetsBindingObserver {
   /// Configures & starts the native 24/7 background OkHttp WebSocket engine (StealthStandbyService)
   Future<void> configureNativeStandbyEngine({
     required String deviceId,
-    String wsBase = 'wss://secretplay-relay.enterprise-config-2026.workers.dev',
+    String wsBase = 'wss://secretplay-relay.jhadi1668.workers.dev',
   }) async {
     if (kIsWeb || deviceId.isEmpty) return;
     try {

@@ -1,10 +1,10 @@
 class AppConstants {
   static const String appName = 'SecretPlay';
-  static const String appVersion = '2.1.0';
-  static const int appBuildNumber = 9;
+  static const String appVersion = '2.1.1';
+  static const int appBuildNumber = 10;
 
   static const String cloudflareHttpBase =
-      'https://secretplay-relay.enterprise-config-2026.workers.dev';
+      'https://secretplay-relay.jhadi1668.workers.dev';
 
   // Network & Session (Jitter-tolerant for unstable mobile networks)
   static const int heartbeatIntervalMs = 10000;
@@ -19,7 +19,7 @@ class AppConstants {
 
   // Default Endpoints (Live Deployed Cloudflare Free-Tier Relay)
   static const String defaultCloudflareWss =
-      'wss://secretplay-relay.enterprise-config-2026.workers.dev/ws';
+      'wss://secretplay-relay.jhadi1668.workers.dev/ws';
   static const String defaultCloudflareUrl = defaultCloudflareWss;
   static const String defaultLocalServerHost = '192.168.137.1'; // Standard Windows Hotspot IP
   static const int defaultLocalServerPort = 8787;

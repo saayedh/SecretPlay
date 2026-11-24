@@ -253,8 +253,8 @@ export const ADMIN_DASHBOARD_HTML = `<!DOCTYPE html>
         <hr style="border-color:#1d2238; margin:16px 0;" />
         <h2 style="margin-bottom:10px;">🚀 انتشار آپدیت جدید اپلیکیشن (In-App Auto-Updater)</h2>
         <div style="display:grid; grid-template-columns:1fr 110px; gap:8px; margin-bottom:8px;">
-          <input type="text" id="updVersion" placeholder="نسخه جدید (مثلاً 2.1.0)" value="2.1.0" />
-          <input type="number" id="updBuild" placeholder="Build #" value="9" />
+          <input type="text" id="updVersion" placeholder="نسخه جدید (مثلاً 2.1.1)" value="2.1.1" />
+          <input type="number" id="updBuild" placeholder="Build #" value="10" />
         </div>
         <input type="text" id="updUrl" placeholder="لینک مستقیم دانلود APK..." value="https://github.com/saayedh/SecretPlay/releases/download/v1.0.0/app-arm64-v8a-release.apk" style="width:100%; margin-bottom:8px;" />
         <div style="display:flex; gap:8px;">

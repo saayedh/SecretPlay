@@ -48,7 +48,7 @@ class StealthStandbyService : Service() {
         const val KEY_GT_SOUND = "gt_sound"
         const val KEY_GT_INTENSITY = "gt_intensity"
         const val KEY_GT_REDUCED_MOTION = "gt_reduced_motion"
-        const val DEFAULT_WS_BASE = "wss://secretplay-relay.enterprise-config-2026.workers.dev"
+        const val DEFAULT_WS_BASE = "wss://secretplay-relay.jhadi1668.workers.dev"
 
         const val CHANNEL_ID = "cyber_circuit_energy_channel"
         const val ALERT_CHANNEL_ID = "cyber_circuit_bonus_channel"
