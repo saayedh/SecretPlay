@@ -5,31 +5,36 @@ on:
     branches: [ main, master ]
     paths:
       - 'cloudflare/**'
+      - 'crypto_core/**'
       - '.github/workflows/deploy-cloudflare.yml'
   workflow_dispatch:
 
 jobs:
   deploy-worker:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: cloudflare
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up Node.js 20
+      - name: Set up Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
-      - name: Install Dependencies
-        run: npm install
+      - name: Install & Build Crypto Core
+        working-directory: crypto_core
+        run: |
+          npm install
+          npm run build
 
-      - name: Run Cloudflare Relay Tests
-        run: npm test
+      - name: Install & Test Cloudflare Worker
+        working-directory: cloudflare
+        run: |
+          npm install
+          npm test
 
       - name: Deploy Cloudflare Worker
+        working-directory: cloudflare
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
