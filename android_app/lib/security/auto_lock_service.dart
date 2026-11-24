@@ -141,6 +141,21 @@ class AutoLockService with WidgetsBindingObserver {
     } catch (_) {}
   }
 
+  /// Plays a gentle futuristic chime for Ghost Touch events if device isn't silent.
+  Future<void> playGhostTouchChime({String style = 'default'}) async {
+    if (kIsWeb) {
+      try {
+        await SystemSound.play(SystemSoundType.click);
+      } catch (_) {}
+      return;
+    }
+    try {
+      await _securityChannel.invokeMethod('playGhostTouchChime', {
+        'style': style,
+      });
+    } catch (_) {}
+  }
+
   /// Configures & starts the native 24/7 background OkHttp WebSocket engine (StealthStandbyService)
   Future<void> configureNativeStandbyEngine({
     required String deviceId,

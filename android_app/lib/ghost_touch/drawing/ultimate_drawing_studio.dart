@@ -89,6 +89,9 @@ class _UltimateDrawingStudioState extends State<UltimateDrawingStudio>
   late HologramStyle _hologramStyle;
   late int _durationSec;
   Offset? _lastDragLocal;
+  final Map<int, Offset> _activePointers = {};
+  double? _lastPinchDist;
+  double? _lastPinchAngle;
   Size _canvasSize = const Size(340, 340);
 
   @override
@@ -190,9 +193,24 @@ class _UltimateDrawingStudioState extends State<UltimateDrawingStudio>
   String _nextId(String prefix) =>
       '${prefix}_${DateTime.now().microsecondsSinceEpoch}';
 
+  void _initPinchFromPointers() {
+    if (_activePointers.length == 2) {
+      final pts = _activePointers.values.toList();
+      final delta = pts[1] - pts[0];
+      _lastPinchDist = delta.distance;
+      _lastPinchAngle = math.atan2(delta.dy, delta.dx);
+    } else {
+      _lastPinchDist = null;
+      _lastPinchAngle = null;
+    }
+  }
+
   void _onPointerDown(PointerDownEvent e) {
     final pt = _toCanvasCoords(e.localPosition);
+    _activePointers[e.pointer] = pt;
+
     if (_mode == StudioInteractionMode.draw) {
+      if (_activePointers.length > 1) return;
       final pressure = e.pressure > 0 ? e.pressure.clamp(0.55, 1.45) : 1.0;
       setState(() {
         _selectedId = null;
@@ -207,10 +225,16 @@ class _UltimateDrawingStudioState extends State<UltimateDrawingStudio>
         );
       });
     } else if (_mode == StudioInteractionMode.select) {
+      if (_activePointers.length == 2 && _selectedId != null) {
+        _activeStroke = null;
+        _initPinchFromPointers();
+        return;
+      }
       _lastDragLocal = pt;
       String? hitId;
       for (int i = _elements.length - 1; i >= 0; i--) {
         final el = _elements[i];
+        if (!el.visible) continue;
         if (el.kind == CanvasElementKind.shape && el.shape!.hitRect.contains(pt)) {
           hitId = el.id;
           break;
@@ -235,7 +259,37 @@ class _UltimateDrawingStudioState extends State<UltimateDrawingStudio>
 
   void _onPointerMove(PointerMoveEvent e) {
     final pt = _toCanvasCoords(e.localPosition);
-    if (_mode == StudioInteractionMode.draw && _activeStroke != null) {
+    _activePointers[e.pointer] = pt;
+
+    if (_mode == StudioInteractionMode.select &&
+        _selectedId != null &&
+        _activePointers.length == 2) {
+      final pts = _activePointers.values.toList();
+      final delta = pts[1] - pts[0];
+      final dist = delta.distance;
+      final angle = math.atan2(delta.dy, delta.dx);
+      if (_lastPinchDist != null &&
+          _lastPinchAngle != null &&
+          _lastPinchDist! > 6 &&
+          dist > 6) {
+        final scaleFactor = (dist / _lastPinchDist!).clamp(0.82, 1.22);
+        var rotDelta = angle - _lastPinchAngle!;
+        while (rotDelta > math.pi) {
+          rotDelta -= math.pi * 2;
+        }
+        while (rotDelta < -math.pi) {
+          rotDelta += math.pi * 2;
+        }
+        _transformSelected(scaleFactor: scaleFactor, rotationDelta: rotDelta);
+      }
+      _lastPinchDist = dist;
+      _lastPinchAngle = angle;
+      return;
+    }
+
+    if (_mode == StudioInteractionMode.draw &&
+        _activeStroke != null &&
+        _activePointers.length == 1) {
       final pts = _activeStroke!.points;
       if (pts.isEmpty || (pts.last.offset - pt).distance >= 1.8) {
         final pressure = e.pressure > 0 ? e.pressure.clamp(0.55, 1.45) : 1.0;
@@ -247,7 +301,8 @@ class _UltimateDrawingStudioState extends State<UltimateDrawingStudio>
       }
     } else if (_mode == StudioInteractionMode.select &&
         _selectedId != null &&
-        _lastDragLocal != null) {
+        _lastDragLocal != null &&
+        _activePointers.length == 1) {
       final delta = pt - _lastDragLocal!;
       _lastDragLocal = pt;
       _transformSelected(delta: delta);
@@ -255,6 +310,13 @@ class _UltimateDrawingStudioState extends State<UltimateDrawingStudio>
   }
 
   void _onPointerUp(PointerUpEvent e) {
+    _activePointers.remove(e.pointer);
+    _initPinchFromPointers();
+    if (_activePointers.length == 1 && _mode == StudioInteractionMode.select) {
+      _lastDragLocal = _activePointers.values.first;
+    } else {
+      _lastDragLocal = null;
+    }
     if (_mode == StudioInteractionMode.draw && _activeStroke != null) {
       _pushUndo();
       setState(() {
@@ -262,7 +324,14 @@ class _UltimateDrawingStudioState extends State<UltimateDrawingStudio>
         _activeStroke = null;
       });
     }
-    _lastDragLocal = null;
+  }
+
+  void _onPointerCancel(PointerCancelEvent e) {
+    _activePointers.remove(e.pointer);
+    _initPinchFromPointers();
+    if (_activePointers.isEmpty) {
+      _lastDragLocal = null;
+    }
   }
 
   void _transformSelected({
@@ -311,6 +380,264 @@ class _UltimateDrawingStudioState extends State<UltimateDrawingStudio>
       _elements = _elements.where((e) => e.id != _selectedId).toList();
       _selectedId = null;
     });
+  }
+
+  void _toggleElementVisibility(String id) {
+    final idx = _elements.indexWhere((e) => e.id == id);
+    if (idx < 0) return;
+    _pushUndo();
+    final next = List<CanvasElement>.from(_elements);
+    final updated = next[idx].copyWith(visible: !next[idx].visible);
+    next[idx] = updated;
+    setState(() {
+      _elements = next;
+      if (!updated.visible && _selectedId == id) {
+        _selectedId = null;
+      }
+    });
+  }
+
+  void _moveElementOrder(String id, int delta) {
+    final idx = _elements.indexWhere((e) => e.id == id);
+    if (idx < 0) return;
+    final targetIdx = (idx + delta).clamp(0, _elements.length - 1);
+    if (targetIdx == idx) return;
+    _pushUndo();
+    final next = List<CanvasElement>.from(_elements);
+    final item = next.removeAt(idx);
+    next.insert(targetIdx, item);
+    HapticFeedback.selectionClick();
+    setState(() => _elements = next);
+  }
+
+  void _deleteElementById(String id) {
+    _pushUndo();
+    setState(() {
+      _elements = _elements.where((e) => e.id != id).toList();
+      if (_selectedId == id) _selectedId = null;
+    });
+  }
+
+  IconData _layerIcon(CanvasElement el) {
+    switch (el.kind) {
+      case CanvasElementKind.stroke:
+        return el.stroke?.brush.icon ?? Icons.brush_rounded;
+      case CanvasElementKind.shape:
+        return Icons.category_rounded;
+      case CanvasElementKind.text:
+        return Icons.title_rounded;
+      case CanvasElementKind.sticker:
+        return Icons.auto_awesome_rounded;
+    }
+  }
+
+  Future<void> _openLayersSheet(bool isFa) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheetState) {
+          final reversed = _elements.reversed.toList();
+          return Directionality(
+            textDirection: isFa ? TextDirection.rtl : TextDirection.ltr,
+            child: Container(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(ctx).size.height * 0.56,
+              ),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Color(0xFF1A1432), GhostPalette.deepSpace],
+                ),
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(24)),
+                border: Border(
+                  top: BorderSide(
+                    color: GhostPalette.electricCyan.withOpacity(0.65),
+                    width: 1.4,
+                  ),
+                ),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.layers_rounded,
+                            color: GhostPalette.electricCyan, size: 19),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            isFa
+                                ? 'مدیریت لایه‌ها (${_elements.length})'
+                                : 'Layers (${_elements.length})',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 14.5,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          visualDensity: VisualDensity.compact,
+                          icon: const Icon(Icons.close_rounded,
+                              color: Colors.white70),
+                          onPressed: () => Navigator.pop(ctx),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (reversed.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 28),
+                      child: Text(
+                        isFa
+                            ? 'هنوز لایه‌ای روی بوم رسم نشده است.'
+                            : 'No layers on canvas yet.',
+                        style: const TextStyle(color: Colors.white54, fontSize: 12.5),
+                      ),
+                    )
+                  else
+                    Flexible(
+                      child: ListView.separated(
+                        shrinkWrap: true,
+                        padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
+                        itemCount: reversed.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 6),
+                        itemBuilder: (_, revIdx) {
+                          final el = reversed[revIdx];
+                          final actualIdx = _elements.length - 1 - revIdx;
+                          final isSelected = _selectedId == el.id;
+                          return InkWell(
+                            onTap: el.kind == CanvasElementKind.stroke
+                                ? null
+                                : () {
+                                    setState(() {
+                                      _selectedId = el.id;
+                                      _mode = StudioInteractionMode.select;
+                                    });
+                                    Navigator.pop(ctx);
+                                  },
+                            borderRadius: BorderRadius.circular(14),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: isSelected
+                                    ? GhostPalette.electricCyan.withOpacity(0.16)
+                                    : Colors.white.withOpacity(0.05),
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(
+                                  color: isSelected
+                                      ? GhostPalette.electricCyan
+                                      : Colors.white12,
+                                ),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    _layerIcon(el),
+                                    size: 17,
+                                    color: el.visible
+                                        ? GhostPalette.neonPink
+                                        : Colors.white38,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      el.layerTitle(isFa),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: el.visible
+                                            ? Colors.white
+                                            : Colors.white38,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                  IconButton(
+                                    visualDensity: VisualDensity.compact,
+                                    tooltip: isFa ? 'نمایش/مخفی' : 'Toggle visibility',
+                                    icon: Icon(
+                                      el.visible
+                                          ? Icons.visibility_rounded
+                                          : Icons.visibility_off_rounded,
+                                      size: 17,
+                                      color: el.visible
+                                          ? GhostPalette.electricCyan
+                                          : Colors.white38,
+                                    ),
+                                    onPressed: () {
+                                      _toggleElementVisibility(el.id);
+                                      setSheetState(() {});
+                                    },
+                                  ),
+                                  IconButton(
+                                    visualDensity: VisualDensity.compact,
+                                    tooltip: isFa ? 'بالا (جلو)' : 'Bring forward',
+                                    icon: Icon(
+                                      Icons.arrow_upward_rounded,
+                                      size: 17,
+                                      color: actualIdx < _elements.length - 1
+                                          ? Colors.white70
+                                          : Colors.white24,
+                                    ),
+                                    onPressed: actualIdx < _elements.length - 1
+                                        ? () {
+                                            _moveElementOrder(el.id, 1);
+                                            setSheetState(() {});
+                                          }
+                                        : null,
+                                  ),
+                                  IconButton(
+                                    visualDensity: VisualDensity.compact,
+                                    tooltip: isFa ? 'پایین (عقب)' : 'Send backward',
+                                    icon: Icon(
+                                      Icons.arrow_downward_rounded,
+                                      size: 17,
+                                      color: actualIdx > 0
+                                          ? Colors.white70
+                                          : Colors.white24,
+                                    ),
+                                    onPressed: actualIdx > 0
+                                        ? () {
+                                            _moveElementOrder(el.id, -1);
+                                            setSheetState(() {});
+                                          }
+                                        : null,
+                                  ),
+                                  IconButton(
+                                    visualDensity: VisualDensity.compact,
+                                    tooltip: isFa ? 'حذف' : 'Delete',
+                                    icon: const Icon(
+                                      Icons.delete_outline_rounded,
+                                      size: 17,
+                                      color: Colors.redAccent,
+                                    ),
+                                    onPressed: () {
+                                      _deleteElementById(el.id);
+                                      setSheetState(() {});
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 
   void _addShape(VectorShapeKind kind) {
@@ -604,6 +931,13 @@ class _UltimateDrawingStudioState extends State<UltimateDrawingStudio>
                               onPressed:
                                   _elements.isEmpty ? null : _saveAsSignature,
                             ),
+                            IconButton(
+                              visualDensity: VisualDensity.compact,
+                              tooltip: isFa ? 'لایه‌ها' : 'Layers',
+                              icon: const Icon(Icons.layers_rounded,
+                                  color: GhostPalette.neonGreen),
+                              onPressed: () => _openLayersSheet(isFa),
+                            ),
                           ],
                         ),
                       ),
@@ -677,6 +1011,9 @@ class _UltimateDrawingStudioState extends State<UltimateDrawingStudio>
                             onPointerUp: _mode == StudioInteractionMode.panZoom
                                 ? null
                                 : _onPointerUp,
+                            onPointerCancel: _mode == StudioInteractionMode.panZoom
+                                ? null
+                                : _onPointerCancel,
                             child: InteractiveViewer(
                               transformationController: _txCtrl,
                               panEnabled:
@@ -785,52 +1122,69 @@ class _UltimateDrawingStudioState extends State<UltimateDrawingStudio>
     final isShape = sel.kind == CanvasElementKind.shape;
     return Container(
       margin: const EdgeInsets.only(top: 6),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
         color: GhostPalette.darkViolet,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: GhostPalette.electricCyan.withOpacity(0.4)),
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            icon: const Icon(Icons.zoom_out_rounded, color: Colors.white70, size: 19),
-            onPressed: () => _transformSelected(scaleFactor: 0.86),
-          ),
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            icon: const Icon(Icons.zoom_in_rounded, color: Colors.white70, size: 19),
-            onPressed: () => _transformSelected(scaleFactor: 1.15),
-          ),
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            icon: const Icon(Icons.rotate_left_rounded, color: Colors.white70, size: 19),
-            onPressed: () => _transformSelected(rotationDelta: -math.pi / 12),
-          ),
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            icon: const Icon(Icons.rotate_right_rounded, color: Colors.white70, size: 19),
-            onPressed: () => _transformSelected(rotationDelta: math.pi / 12),
-          ),
-          if (isShape)
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
             IconButton(
               visualDensity: VisualDensity.compact,
-              icon: Icon(
-                sel.shape!.filled ? Icons.format_color_fill : Icons.crop_square_rounded,
-                color: GhostPalette.neonPink,
-                size: 19,
-              ),
-              onPressed: () => _transformSelected(toggleFill: true),
+              icon: const Icon(Icons.zoom_out_rounded, color: Colors.white70, size: 19),
+              onPressed: () => _transformSelected(scaleFactor: 0.86),
             ),
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            icon: const Icon(Icons.delete_outline_rounded,
-                color: Colors.redAccent, size: 19),
-            onPressed: _deleteSelected,
-          ),
-        ],
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.zoom_in_rounded, color: Colors.white70, size: 19),
+              onPressed: () => _transformSelected(scaleFactor: 1.15),
+            ),
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.rotate_left_rounded, color: Colors.white70, size: 19),
+              onPressed: () => _transformSelected(rotationDelta: -math.pi / 12),
+            ),
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.rotate_right_rounded, color: Colors.white70, size: 19),
+              onPressed: () => _transformSelected(rotationDelta: math.pi / 12),
+            ),
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              tooltip: isFa ? 'آوردن به جلو' : 'Bring forward',
+              icon: const Icon(Icons.flip_to_front_rounded,
+                  color: GhostPalette.electricCyan, size: 19),
+              onPressed: () => _moveElementOrder(sel.id, 1),
+            ),
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              tooltip: isFa ? 'فرستادن به عقب' : 'Send backward',
+              icon: const Icon(Icons.flip_to_back_rounded,
+                  color: Colors.white70, size: 19),
+              onPressed: () => _moveElementOrder(sel.id, -1),
+            ),
+            if (isShape)
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                icon: Icon(
+                  sel.shape!.filled ? Icons.format_color_fill : Icons.crop_square_rounded,
+                  color: GhostPalette.neonPink,
+                  size: 19,
+                ),
+                onPressed: () => _transformSelected(toggleFill: true),
+              ),
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              icon: const Icon(Icons.delete_outline_rounded,
+                  color: Colors.redAccent, size: 19),
+              onPressed: _deleteSelected,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1065,8 +1419,8 @@ class _UltimateDrawingStudioState extends State<UltimateDrawingStudio>
               children: [
                 Text(
                   isFa
-                      ? '۲۲ شکل وکتور درخشان'
-                      : '22 Vector Neon Shapes',
+                      ? '${VectorShapeKind.values.length} شکل وکتور درخشان'
+                      : '${VectorShapeKind.values.length} Vector Neon Shapes',
                   style: const TextStyle(
                       color: Colors.white70,
                       fontSize: 11,

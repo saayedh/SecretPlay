@@ -31,6 +31,7 @@ class DrawingCanvasPainter extends CustomPainter {
     // Layer so eraser (BlendMode.clear) clears artwork without punching through background.
     canvas.saveLayer(rect, Paint());
     for (final el in elements) {
+      if (!el.visible) continue;
       _paintElement(canvas, size, el);
     }
     if (activeStroke != null) {
@@ -417,6 +418,30 @@ class DrawingCanvasPainter extends CustomPainter {
         }
         break;
 
+      case BrushKind.pencil:
+        final finePaint = Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round
+          ..strokeWidth = (w * 0.42).clamp(1.2, 10.0);
+        if (shader != null) {
+          finePaint.shader = shader;
+        } else {
+          finePaint.color = baseColor.withOpacity((0.88 * s.opacity).clamp(0.0, 1.0));
+        }
+        canvas.drawPath(path, finePaint);
+        // Subtle graphite grain specks along stroke
+        final grainPaint = Paint()
+          ..color = Color.lerp(baseColor, Colors.white, 0.35)!
+              .withOpacity((0.36 * s.opacity).clamp(0.0, 1.0));
+        for (int i = 0; i < s.points.length; i += 2) {
+          final pt = s.points[i].offset;
+          final jx = ((i * 7) % 5 - 2) * 0.6;
+          final jy = ((i * 11) % 5 - 2) * 0.6;
+          canvas.drawCircle(pt + Offset(jx, jy), (w * 0.14).clamp(0.7, 2.6), grainPaint);
+        }
+        break;
+
       case BrushKind.marker:
         final markerPaint = Paint()
           ..style = PaintingStyle.stroke
@@ -429,6 +454,21 @@ class DrawingCanvasPainter extends CustomPainter {
           markerPaint.color = s.color.withOpacity(0.72 * s.opacity);
         }
         canvas.drawPath(path, markerPaint);
+        break;
+
+      case BrushKind.highlighter:
+        final hiPaint = Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.butt
+          ..strokeJoin = StrokeJoin.bevel
+          ..strokeWidth = w * 2.45;
+        if (shader != null) {
+          hiPaint.shader = shader;
+          hiPaint.color = Colors.white.withOpacity(0.38);
+        } else {
+          hiPaint.color = s.color.withOpacity((0.38 * s.opacity).clamp(0.08, 0.55));
+        }
+        canvas.drawPath(path, hiPaint);
         break;
 
       case BrushKind.calligraphy:
@@ -640,6 +680,28 @@ class DrawingCanvasPainter extends CustomPainter {
         drawShapePath(p);
         break;
 
+      case VectorShapeKind.star6:
+        final t1 = Path();
+        final t2 = Path();
+        for (int i = 0; i < 3; i++) {
+          final a1 = -math.pi / 2 + i * (math.pi * 2 / 3);
+          final a2 = math.pi / 2 + i * (math.pi * 2 / 3);
+          final p1 = center + Offset(math.cos(a1) * r * 0.92, math.sin(a1) * r * 0.92);
+          final p2 = center + Offset(math.cos(a2) * r * 0.92, math.sin(a2) * r * 0.92);
+          if (i == 0) {
+            t1.moveTo(p1.dx, p1.dy);
+            t2.moveTo(p2.dx, p2.dy);
+          } else {
+            t1.lineTo(p1.dx, p1.dy);
+            t2.lineTo(p2.dx, p2.dy);
+          }
+        }
+        t1.close();
+        t2.close();
+        drawShapePath(t1);
+        drawShapePath(t2);
+        break;
+
       case VectorShapeKind.star4Sparkle:
         final p = Path()
           ..moveTo(center.dx, center.dy - r)
@@ -756,6 +818,72 @@ class DrawingCanvasPainter extends CustomPainter {
           canvas.restore();
         }
         canvas.drawCircle(center, r * 0.18, Paint()..color = Colors.white);
+        break;
+
+      case VectorShapeKind.rose:
+        final bud = Path();
+        for (int i = 0; i <= 72; i++) {
+          final t = i / 72;
+          final a = t * math.pi * 6;
+          final rad = (0.12 + 0.62 * t) * r;
+          final pt = center +
+              Offset(math.cos(a) * rad, math.sin(a) * rad - r * 0.12);
+          if (i == 0) {
+            bud.moveTo(pt.dx, pt.dy);
+          } else {
+            bud.lineTo(pt.dx, pt.dy);
+          }
+        }
+        if (filled) {
+          canvas.drawCircle(center + Offset(0, -r * 0.12), r * 0.66, fillPaint);
+        }
+        canvas.drawPath(bud, glowPaint);
+        canvas.drawPath(bud, strokePaint);
+        final stem = Path()
+          ..moveTo(center.dx, center.dy + r * 0.52)
+          ..lineTo(center.dx, center.dy + r * 0.96)
+          ..moveTo(center.dx, center.dy + r * 0.74)
+          ..quadraticBezierTo(center.dx + r * 0.38, center.dy + r * 0.56,
+              center.dx + r * 0.44, center.dy + r * 0.78);
+        canvas.drawPath(stem, strokePaint);
+        break;
+
+      case VectorShapeKind.cloud:
+        final p = Path()
+          ..moveTo(center.dx - r * 0.58, center.dy + r * 0.34)
+          ..cubicTo(center.dx - r * 0.98, center.dy + r * 0.34,
+              center.dx - r * 0.96, center.dy - r * 0.22,
+              center.dx - r * 0.52, center.dy - r * 0.22)
+          ..cubicTo(center.dx - r * 0.38, center.dy - r * 0.66,
+              center.dx + r * 0.24, center.dy - r * 0.68,
+              center.dx + r * 0.38, center.dy - r * 0.24)
+          ..cubicTo(center.dx + r * 0.88, center.dy - r * 0.26,
+              center.dx + r * 0.96, center.dy + r * 0.34,
+              center.dx + r * 0.56, center.dy + r * 0.34)
+          ..close();
+        drawShapePath(p);
+        break;
+
+      case VectorShapeKind.square:
+        final p = Path()
+          ..addRect(Rect.fromCenter(center: center, width: r * 1.56, height: r * 1.56));
+        drawShapePath(p);
+        break;
+
+      case VectorShapeKind.roundedSquare:
+        final p = Path()
+          ..addRRect(RRect.fromRectAndRadius(
+            Rect.fromCenter(center: center, width: r * 1.62, height: r * 1.62),
+            Radius.circular(r * 0.36),
+          ));
+        drawShapePath(p);
+        break;
+
+      case VectorShapeKind.ellipse:
+        final p = Path()
+          ..addOval(Rect.fromCenter(
+              center: center, width: r * 1.82, height: r * 1.12));
+        drawShapePath(p);
         break;
 
       case VectorShapeKind.neonArrow:

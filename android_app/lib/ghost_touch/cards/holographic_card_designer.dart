@@ -58,6 +58,47 @@ class _HolographicCardDesignerState extends State<HolographicCardDesigner>
   late bool _flashOnScreen;
   int _activeTab = 0;
 
+  static const List<String> _textColorHexPresets = [
+    '#FFFFFF',
+    '#FFE4F2',
+    '#A5F3FC',
+    '#FEF08A',
+    '#BBF7D0',
+    '#DDD6FE',
+    '#FF8EC7',
+    '#00E5FF',
+  ];
+
+  static const List<String> _decorativePresets = [
+    'sparkles',
+    'hearts',
+    'orbit',
+    'cyberGrid',
+    'confetti',
+    'bokeh',
+    'none',
+  ];
+
+  String _decorLabel(String preset, bool isFa) {
+    switch (preset) {
+      case 'none':
+        return isFa ? 'بدون افکت' : 'None';
+      case 'hearts':
+        return isFa ? 'قلب‌های ریز' : 'Hearts';
+      case 'orbit':
+        return isFa ? 'مدار نوری' : 'Orbit';
+      case 'cyberGrid':
+        return isFa ? 'شبکه سایبری' : 'Cyber Grid';
+      case 'confetti':
+        return isFa ? 'کاغذ رنگی' : 'Confetti';
+      case 'bokeh':
+        return isFa ? 'حباب بوکه' : 'Bokeh';
+      case 'sparkles':
+      default:
+        return isFa ? 'درخشش ستاره' : 'Sparkles';
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -236,7 +277,7 @@ class _HolographicCardDesignerState extends State<HolographicCardDesigner>
                     ),
                     const SizedBox(height: 10),
                     SizedBox(
-                      height: 156,
+                      height: 184,
                       child: _buildTabContent(isFa, accent),
                     ),
                   ],
@@ -360,91 +401,190 @@ class _HolographicCardDesignerState extends State<HolographicCardDesigner>
         );
 
       case 1:
-        return Column(
-          children: [
-            TextField(
-              controller: _textCtrl,
-              maxLines: 2,
-              maxLength: 140,
-              onChanged: (v) => setState(() => _card = _card.copyWith(text: v)),
-              style: const TextStyle(color: Colors.white, fontSize: 13),
-              decoration: InputDecoration(
-                counterText: '',
-                hintText: isFa
-                    ? 'پیام عاشقانه یا خاص خود را بنویسید...'
-                    : 'Write your holographic message...',
-                hintStyle:
-                    const TextStyle(color: Colors.white38, fontSize: 12),
-                filled: true,
-                fillColor: Colors.white.withOpacity(0.06),
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(14),
-                  borderSide: BorderSide.none,
+        return SingleChildScrollView(
+          child: Column(
+            children: [
+              TextField(
+                controller: _textCtrl,
+                maxLines: 2,
+                maxLength: 140,
+                onChanged: (v) =>
+                    setState(() => _card = _card.copyWith(text: v)),
+                style: const TextStyle(color: Colors.white, fontSize: 13),
+                decoration: InputDecoration(
+                  counterText: '',
+                  hintText: isFa
+                      ? 'پیام عاشقانه یا خاص خود را بنویسید...'
+                      : 'Write your holographic message...',
+                  hintStyle:
+                      const TextStyle(color: Colors.white38, fontSize: 12),
+                  filled: true,
+                  fillColor: Colors.white.withOpacity(0.06),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: BorderSide.none,
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                // Alignment cycler
-                InkWell(
-                  onTap: () {
-                    final aligns = [
-                      TextAlign.center,
-                      TextAlign.right,
-                      TextAlign.left,
-                    ];
-                    final idx = aligns.indexOf(_card.textAlign);
-                    final next = aligns[(idx + 1) % aligns.length];
-                    setState(() => _card = _card.copyWith(textAlign: next));
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.all(7),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.08),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Icon(
-                      _card.textAlign == TextAlign.center
-                          ? Icons.format_align_center_rounded
-                          : (_card.textAlign == TextAlign.right
-                              ? Icons.format_align_right_rounded
-                              : Icons.format_align_left_rounded),
-                      color: Colors.white,
-                      size: 16,
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  // Alignment cycler
+                  InkWell(
+                    onTap: () {
+                      final aligns = [
+                        TextAlign.center,
+                        TextAlign.right,
+                        TextAlign.left,
+                      ];
+                      final idx = aligns.indexOf(_card.textAlign);
+                      final next = aligns[(idx + 1) % aligns.length];
+                      setState(() => _card = _card.copyWith(textAlign: next));
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.all(7),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Icon(
+                        _card.textAlign == TextAlign.center
+                            ? Icons.format_align_center_rounded
+                            : (_card.textAlign == TextAlign.right
+                                ? Icons.format_align_right_rounded
+                                : Icons.format_align_left_rounded),
+                        color: Colors.white,
+                        size: 16,
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: SizedBox(
-                    height: 32,
-                    child: ListView(
-                      scrollDirection: Axis.horizontal,
-                      children: CardFontStyle.values.map((f) {
-                        final active = _card.fontStyle == f;
-                        return Padding(
-                          padding: const EdgeInsets.only(right: 6),
-                          child: ChoiceChip(
-                            label: Text(
-                              f.name.toUpperCase(),
-                              style: const TextStyle(fontSize: 10),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: SizedBox(
+                      height: 32,
+                      child: ListView(
+                        scrollDirection: Axis.horizontal,
+                        children: CardFontStyle.values.map((f) {
+                          final active = _card.fontStyle == f;
+                          return Padding(
+                            padding: const EdgeInsets.only(right: 6),
+                            child: ChoiceChip(
+                              label: Text(
+                                f.name.toUpperCase(),
+                                style: const TextStyle(fontSize: 10),
+                              ),
+                              selected: active,
+                              selectedColor: accent.withOpacity(0.32),
+                              onSelected: (_) => setState(
+                                  () => _card = _card.copyWith(fontStyle: f)),
                             ),
-                            selected: active,
-                            selectedColor: accent.withOpacity(0.32),
-                            onSelected: (_) => setState(
-                                () => _card = _card.copyWith(fontStyle: f)),
-                          ),
-                        );
-                      }).toList(),
+                          );
+                        }).toList(),
+                      ),
                     ),
                   ),
-                ),
-              ],
-            ),
-          ],
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Text(
+                    isFa ? 'رنگ متن:' : 'Text:',
+                    style: const TextStyle(color: Colors.white70, fontSize: 11),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: SizedBox(
+                      height: 26,
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: _textColorHexPresets.length,
+                        separatorBuilder: (_, __) => const SizedBox(width: 6),
+                        itemBuilder: (_, i) {
+                          final hex = _textColorHexPresets[i];
+                          final c = GhostPalette.fromHex(hex, fallback: Colors.white);
+                          final active =
+                              _card.textColorHex.toUpperCase() == hex.toUpperCase();
+                          return GestureDetector(
+                            onTap: () {
+                              HapticFeedback.selectionClick();
+                              setState(() => _card = _card.copyWith(textColorHex: hex));
+                            },
+                            child: Container(
+                              width: 24,
+                              height: 24,
+                              decoration: BoxDecoration(
+                                color: c,
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: active
+                                      ? GhostPalette.electricCyan
+                                      : Colors.white30,
+                                  width: active ? 2.4 : 1,
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Text(
+                    isFa ? 'نور حاشیه:' : 'Accent:',
+                    style: const TextStyle(color: Colors.white70, fontSize: 11),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: SizedBox(
+                      height: 26,
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: GhostPalette.presets.length,
+                        separatorBuilder: (_, __) => const SizedBox(width: 6),
+                        itemBuilder: (_, i) {
+                          final c = GhostPalette.presets[i];
+                          final hex = GhostPalette.toHex(c);
+                          final active =
+                              _card.accentColorHex.toUpperCase() == hex.toUpperCase();
+                          return GestureDetector(
+                            onTap: () {
+                              HapticFeedback.selectionClick();
+                              setState(() => _card = _card.copyWith(accentColorHex: hex));
+                            },
+                            child: Container(
+                              width: 24,
+                              height: 24,
+                              decoration: BoxDecoration(
+                                color: c,
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: active ? Colors.white : Colors.white24,
+                                  width: active ? 2.4 : 1,
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: c.withOpacity(0.45),
+                                    blurRadius: 6,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         );
 
       case 2:
@@ -461,7 +601,7 @@ class _HolographicCardDesignerState extends State<HolographicCardDesigner>
                 const SizedBox(width: 6),
                 Expanded(
                   child: SizedBox(
-                    height: 32,
+                    height: 30,
                     child: ListView(
                       scrollDirection: Axis.horizontal,
                       children: CardBorderEffect.values.map((b) {
@@ -482,7 +622,41 @@ class _HolographicCardDesignerState extends State<HolographicCardDesigner>
                 ),
               ],
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Text(
+                  isFa ? 'تزئین:' : 'Decor:',
+                  style: const TextStyle(color: Colors.white70, fontSize: 11),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: SizedBox(
+                    height: 30,
+                    child: ListView(
+                      scrollDirection: Axis.horizontal,
+                      children: _decorativePresets.map((preset) {
+                        final active = _card.decorativePreset == preset;
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 6),
+                          child: ChoiceChip(
+                            label: Text(
+                              _decorLabel(preset, isFa),
+                              style: const TextStyle(fontSize: 10),
+                            ),
+                            selected: active,
+                            selectedColor: GhostPalette.electricCyan.withOpacity(0.28),
+                            onSelected: (_) => setState(() =>
+                                _card = _card.copyWith(decorativePreset: preset)),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
             Expanded(
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../chat/chat_message.dart';
+import '../../security/auto_lock_service.dart';
 import '../cards/holographic_card_renderer.dart';
 import '../ghost_touch_theme.dart';
 import '../models/hologram_models.dart';
@@ -102,6 +103,10 @@ class _FloatingHologramExperienceState extends State<FloatingHologramExperience>
       duration: const Duration(milliseconds: 950),
     );
 
+    if (GhostTouchPreferencesService.instance.current.soundEnabled) {
+      unawaited(AutoLockService().playGhostTouchChime(style: 'entrance'));
+    }
+
     _startCountdown();
   }
 
@@ -155,7 +160,10 @@ class _FloatingHologramExperienceState extends State<FloatingHologramExperience>
   }
 
   void _triggerTapBurst(Color color, [Offset localFrac = const Offset(0.5, 0.5)]) {
-    HapticFeedback.lightImpact();
+    final prefs = GhostTouchPreferencesService.instance.current;
+    if (prefs.vibrateEnabled) {
+      HapticFeedback.lightImpact();
+    }
     setState(() {
       _lastTapFrac = localFrac;
       _burstColor = color;
@@ -164,7 +172,13 @@ class _FloatingHologramExperienceState extends State<FloatingHologramExperience>
   }
 
   void _triggerMegaHeartbeat() {
-    HapticFeedback.heavyImpact();
+    final prefs = GhostTouchPreferencesService.instance.current;
+    if (prefs.vibrateEnabled) {
+      HapticFeedback.heavyImpact();
+    }
+    if (prefs.soundEnabled) {
+      unawaited(AutoLockService().playGhostTouchChime(style: 'mega_heart'));
+    }
     setState(() {
       _burstColor = GhostPalette.neonPink;
       _timerPaused = true;
@@ -639,6 +653,10 @@ class _FloatingHologramExperienceState extends State<FloatingHologramExperience>
   Widget _reactionPill(String reactionKey, IconData icon, Color color) {
     return InkWell(
       onTap: () {
+        final prefs = GhostTouchPreferencesService.instance.current;
+        if (prefs.soundEnabled) {
+          unawaited(AutoLockService().playGhostTouchChime(style: reactionKey));
+        }
         _triggerTapBurst(color);
         widget.onQuickReaction?.call(reactionKey);
       },

@@ -6,6 +6,8 @@ import 'package:secretplay/chat/chat_message.dart';
 import 'package:secretplay/chat/widgets/cyber_sticker_sheet.dart';
 import 'package:secretplay/ghost_touch/cards/holographic_card_designer.dart';
 import 'package:secretplay/ghost_touch/cards/holographic_card_renderer.dart';
+import 'package:secretplay/ghost_touch/drawing/drawing_canvas_painter.dart';
+import 'package:secretplay/ghost_touch/drawing/drawing_models.dart';
 import 'package:secretplay/ghost_touch/drawing/ultimate_drawing_studio.dart';
 import 'package:secretplay/ghost_touch/ghost_touch_theme.dart';
 import 'package:secretplay/ghost_touch/models/hologram_models.dart';
@@ -70,7 +72,7 @@ void main() {
         text: 'دلم برات تنگ شده ✨',
         textAlign: TextAlign.right,
         fontStyle: CardFontStyle.serif,
-        textColorHex: '#FFFFFF',
+        textColorHex: '#A5F3FC',
         accentColorHex: '#00FFA3',
         borderEffect: CardBorderEffect.doublePrism,
         stickerId: 'love_glowing_heart',
@@ -85,11 +87,13 @@ void main() {
       expect(decoded.text, equals('دلم برات تنگ شده ✨'));
       expect(decoded.textAlign, equals(TextAlign.right));
       expect(decoded.fontStyle, equals(CardFontStyle.serif));
+      expect(decoded.textColorHex, equals('#A5F3FC'));
       expect(decoded.accentColorHex, equals('#00FFA3'));
       expect(decoded.borderEffect, equals(CardBorderEffect.doublePrism));
       expect(decoded.stickerId, equals('love_glowing_heart'));
       expect(decoded.hologramStyle, equals(HologramStyle.cosmicPortal));
       expect(decoded.durationSec, equals(12));
+      expect(decoded.decorativePreset, equals('aurora'));
     });
 
     test('EphemeralChatMessage round-trips flashCard payload & storage JSON', () {
@@ -183,7 +187,74 @@ void main() {
       expect(nativeMap['position'], equals('top'));
       expect(nativeMap['displayDurationSec'], equals(15));
       expect(nativeMap['vibrateEnabled'], isFalse);
+      expect(nativeMap['soundEnabled'], isTrue);
       expect(nativeMap['reducedMotion'], isTrue);
+    });
+
+    test('GhostReactionMeta resolves distinct verified stickers for all 5 reaction types', () {
+      final validIds = GhostStickerCatalog.all.map((e) => e.id).toSet();
+      final keys = ['heart', 'mega_heart', 'spark', 'bolt', 'hug'];
+      final stickersSeen = <String>{};
+      for (final k in keys) {
+        final meta = GhostReactionMeta.of(k);
+        expect(meta.key, equals(k));
+        expect(validIds.contains(meta.stickerId), isTrue,
+            reason: 'Sticker ${meta.stickerId} for reaction $k must exist in catalog');
+        stickersSeen.add(meta.stickerId);
+      }
+      expect(stickersSeen.length, equals(5));
+    });
+  });
+
+  group('Drawing Studio Painters (11 Brushes & 28 Vector Shapes)', () {
+    test('all 28 VectorShapeKind shapes and 11 BrushKind brushes paint cleanly', () {
+      expect(VectorShapeKind.values.length, equals(28));
+      expect(BrushKind.values.length, equals(11));
+
+      for (final kind in VectorShapeKind.values) {
+        for (final filled in [false, true]) {
+          final recorder = ui.PictureRecorder();
+          final canvas = Canvas(recorder);
+          DrawingCanvasPainter.paintVectorShape(
+            canvas,
+            const Offset(64, 64),
+            44,
+            kind,
+            GhostPalette.neonPink,
+            secondary: GhostPalette.electricCyan,
+            filled: filled,
+          );
+          final pic = recorder.endRecording();
+          pic.dispose();
+        }
+      }
+
+      for (final brush in BrushKind.values) {
+        final stroke = DrawingStroke(
+          id: 's_${brush.name}',
+          points: const [
+            DrawingPoint(offset: Offset(10, 20), pressure: 0.8),
+            DrawingPoint(offset: Offset(45, 55), pressure: 1.1),
+            DrawingPoint(offset: Offset(90, 35), pressure: 0.9),
+          ],
+          color: GhostPalette.electricCyan,
+          gradientColor: GhostPalette.neonPink,
+          strokeWidth: 7.0,
+          opacity: 0.85,
+          brush: brush,
+        );
+        final recorder = ui.PictureRecorder();
+        final canvas = Canvas(recorder);
+        DrawingCanvasPainter(
+          elements: [
+            CanvasElement.fromStroke(stroke),
+            CanvasElement.fromStroke(stroke, visible: false),
+          ],
+          background: CanvasBackgroundKind.auroraDark,
+        ).paint(canvas, const Size(160, 160));
+        final pic = recorder.endRecording();
+        pic.dispose();
+      }
     });
   });
 
@@ -331,13 +402,25 @@ void main() {
       await tester.pump(const Duration(milliseconds: 200));
 
       expect(find.text('قلم'), findsOneWidget);
+      expect(find.byIcon(Icons.layers_rounded), findsOneWidget);
+
       await tester.tap(find.text('اشکال'));
       await tester.pump(const Duration(milliseconds: 100));
-      expect(find.text('۲۲ شکل وکتور درخشان'), findsOneWidget);
+      expect(find.text('${VectorShapeKind.values.length} شکل وکتور درخشان'),
+          findsOneWidget);
 
       await tester.tap(find.text('بوم/فلش'));
       await tester.pump(const Duration(milliseconds: 100));
       expect(find.text('فلش'), findsOneWidget);
+
+      final layersBtn = find.byIcon(Icons.layers_rounded);
+      await tester.ensureVisible(layersBtn);
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tap(layersBtn);
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.textContaining('مدیریت لایه‌ها'), findsOneWidget);
+      Navigator.of(tester.element(find.textContaining('مدیریت لایه‌ها'))).pop();
+      await tester.pump(const Duration(milliseconds: 300));
 
       await tester.pumpWidget(const SizedBox());
     });
@@ -358,10 +441,55 @@ void main() {
       expect(find.text('طراح کارت پیام هولوگرافیک'), findsOneWidget);
       await tester.tap(find.text('متن و فونت'));
       await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('رنگ متن:'), findsOneWidget);
+      expect(find.text('نور حاشیه:'), findsOneWidget);
+
+      await tester.tap(find.text('استیکر و قاب'));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('تزئین:'), findsOneWidget);
+
       await tester.tap(find.text('افکت و فلش'));
       await tester.pump(const Duration(milliseconds: 100));
       expect(find.textContaining('نمایش هولوگرام فوری'), findsOneWidget);
 
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('HolographicCardRenderer renders all 12 templates x 7 decorative presets',
+        (tester) async {
+      const presets = [
+        'none',
+        'sparkles',
+        'hearts',
+        'orbit',
+        'cyberGrid',
+        'confetti',
+        'bokeh',
+      ];
+      for (final tpl in FlashCardTemplate.values) {
+        for (final preset in presets) {
+          final data = FlashCardData(
+            template: tpl,
+            text: 'Test ${tpl.name}',
+            decorativePreset: preset,
+            textColorHex: '#A5F3FC',
+          );
+          await tester.pumpWidget(
+            MaterialApp(
+              home: Scaffold(
+                body: Center(
+                  child: HolographicCardRenderer(
+                    data: data,
+                    isFa: false,
+                    reducedMotion: true,
+                  ),
+                ),
+              ),
+            ),
+          );
+          await tester.pump();
+        }
+      }
       await tester.pumpWidget(const SizedBox());
     });
   });

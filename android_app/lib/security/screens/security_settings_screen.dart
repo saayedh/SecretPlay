@@ -505,6 +505,14 @@ class _SecuritySettingsScreenState extends State<SecuritySettingsScreen> {
                 SwitchListTile(
                   dense: true,
                   contentPadding: EdgeInsets.zero,
+                  title: const Text('افکت صوتی ملایم هنگام دریافت هولوگرام (Sound FX)'),
+                  value: prefs.soundEnabled,
+                  activeColor: GhostPalette.neonGreen,
+                  onChanged: (v) => svc.update(prefs.copyWith(soundEnabled: v)),
+                ),
+                SwitchListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
                   title: const Text('حالت کم‌مصرف / کاهش حرکت (Reduced Motion)'),
                   value: prefs.reducedMotion,
                   activeColor: GhostPalette.electricCyan,

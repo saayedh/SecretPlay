@@ -162,6 +162,7 @@ class _HolographicCardRendererState extends State<HolographicCardRenderer>
                           template: d.template,
                           accent: accent,
                           borderEffect: d.borderEffect,
+                          decorativePreset: d.decorativePreset,
                           radius: radius,
                           progress: 0.25,
                         ),
@@ -173,6 +174,7 @@ class _HolographicCardRendererState extends State<HolographicCardRenderer>
                             template: d.template,
                             accent: accent,
                             borderEffect: d.borderEffect,
+                            decorativePreset: d.decorativePreset,
                             radius: radius,
                             progress: anim.value,
                           ),
@@ -253,6 +255,7 @@ class _FlashCardArtPainter extends CustomPainter {
   final FlashCardTemplate template;
   final Color accent;
   final CardBorderEffect borderEffect;
+  final String decorativePreset;
   final double radius;
   final double progress;
 
@@ -260,6 +263,7 @@ class _FlashCardArtPainter extends CustomPainter {
     required this.template,
     required this.accent,
     required this.borderEffect,
+    required this.decorativePreset,
     required this.radius,
     required this.progress,
   });
@@ -271,7 +275,163 @@ class _FlashCardArtPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final rect = Offset.zero & size;
     _paintTemplateArt(canvas, size, rect);
+    _paintDecorativePreset(canvas, size, rect);
     _paintBorderEffect(canvas, size, rect);
+  }
+
+  void _paintDecorativePreset(Canvas canvas, Size size, Rect rect) {
+    final w = size.width;
+    final h = size.height;
+    switch (decorativePreset) {
+      case 'none':
+        return;
+
+      case 'hearts':
+        for (int i = 0; i < 6; i++) {
+          final isLeft = i.isEven;
+          final hx = isLeft ? w * (0.09 + (i * 0.03)) : w * (0.91 - (i * 0.03));
+          final hy = h * ((0.18 + i * 0.14 + progress * 0.12) % 0.86 + 0.07);
+          final r = 6.0 + (i % 3) * 2.2;
+          final hp = Path()
+            ..moveTo(hx, hy + r * 0.72)
+            ..cubicTo(hx - r * 1.1, hy + r * 0.1, hx - r * 0.9, hy - r * 0.8,
+                hx, hy - r * 0.22)
+            ..cubicTo(hx + r * 0.9, hy - r * 0.8, hx + r * 1.1, hy + r * 0.1,
+                hx, hy + r * 0.72);
+          canvas.drawPath(
+            hp,
+            Paint()
+              ..color = accent.withOpacity(0.24 + _pulse * 0.14)
+              ..style = PaintingStyle.fill,
+          );
+        }
+        break;
+
+      case 'orbit':
+        final c = Offset(w * 0.5, h * 0.5);
+        final rx = w * 0.44;
+        final ry = h * 0.34;
+        canvas.save();
+        canvas.translate(c.dx, c.dy);
+        canvas.rotate(-0.18);
+        canvas.drawOval(
+          Rect.fromCenter(center: Offset.zero, width: rx * 2, height: ry * 2),
+          Paint()
+            ..color = accent.withOpacity(0.18)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.1,
+        );
+        for (int i = 0; i < 3; i++) {
+          final a = _phase + i * (math.pi * 2 / 3);
+          final pt = Offset(math.cos(a) * rx, math.sin(a) * ry);
+          canvas.drawCircle(
+            pt,
+            3.2,
+            Paint()
+              ..color = (i == 0 ? Colors.white : accent).withOpacity(0.75)
+              ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2),
+          );
+        }
+        canvas.restore();
+        break;
+
+      case 'cyberGrid':
+        final gridPaint = Paint()
+          ..color = accent.withOpacity(0.08)
+          ..strokeWidth = 0.8;
+        const step = 22.0;
+        for (double x = step; x < w; x += step) {
+          canvas.drawLine(Offset(x, 0), Offset(x, h), gridPaint);
+        }
+        for (double y = step; y < h; y += step) {
+          canvas.drawLine(Offset(0, y), Offset(w, y), gridPaint);
+        }
+        final retPaint = Paint()
+          ..color = GhostPalette.electricCyan.withOpacity(0.45)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.4;
+        canvas.drawLine(const Offset(12, 18), const Offset(24, 18), retPaint);
+        canvas.drawLine(const Offset(18, 12), const Offset(18, 24), retPaint);
+        canvas.drawLine(
+            Offset(w - 24, h - 18), Offset(w - 12, h - 18), retPaint);
+        canvas.drawLine(
+            Offset(w - 18, h - 24), Offset(w - 18, h - 12), retPaint);
+        break;
+
+      case 'confetti':
+        const colors = [
+          GhostPalette.neonPink,
+          GhostPalette.electricCyan,
+          GhostPalette.amberGold,
+          GhostPalette.neonGreen,
+          GhostPalette.neonPurple,
+        ];
+        final rng = math.Random(71);
+        for (int i = 0; i < 16; i++) {
+          final cx = rng.nextDouble() * w;
+          final baseY = rng.nextDouble() * h;
+          final cy = (baseY + progress * h * 0.35) % h;
+          canvas.save();
+          canvas.translate(cx, cy);
+          canvas.rotate(_phase + i * 0.7);
+          canvas.drawRRect(
+            RRect.fromRectAndRadius(
+              const Rect.fromLTWH(-4, -2, 8, 4),
+              const Radius.circular(1.5),
+            ),
+            Paint()..color = colors[i % colors.length].withOpacity(0.55),
+          );
+          canvas.restore();
+        }
+        break;
+
+      case 'bokeh':
+        final rng = math.Random(33);
+        for (int i = 0; i < 8; i++) {
+          final bx = rng.nextDouble() * w;
+          final by = rng.nextDouble() * h;
+          final br = 12.0 + rng.nextDouble() * 18.0;
+          final a = 0.08 + 0.08 * math.sin(_phase + i);
+          canvas.drawCircle(
+            Offset(bx, by),
+            br,
+            Paint()
+              ..color = (i.isEven ? accent : GhostPalette.electricCyan)
+                  .withOpacity(a.clamp(0.03, 0.22)),
+          );
+        }
+        break;
+
+      case 'sparkles':
+      default:
+        final spots = [
+          Offset(w * 0.12, h * 0.18),
+          Offset(w * 0.88, h * 0.20),
+          Offset(w * 0.14, h * 0.80),
+          Offset(w * 0.86, h * 0.78),
+          Offset(w * 0.28, h * 0.12),
+          Offset(w * 0.72, h * 0.88),
+        ];
+        for (int i = 0; i < spots.length; i++) {
+          final tw = 0.35 + 0.65 * (0.5 + 0.5 * math.sin(_phase * 2 + i * 1.1));
+          final sr = 4.5 + (i % 3) * 2.0 * tw;
+          final c = spots[i];
+          final p = Path()
+            ..moveTo(c.dx, c.dy - sr)
+            ..quadraticBezierTo(c.dx, c.dy, c.dx + sr, c.dy)
+            ..quadraticBezierTo(c.dx, c.dy, c.dx, c.dy + sr)
+            ..quadraticBezierTo(c.dx, c.dy, c.dx - sr, c.dy)
+            ..quadraticBezierTo(c.dx, c.dy, c.dx, c.dy - sr)
+            ..close();
+          canvas.drawPath(
+            p,
+            Paint()
+              ..color = (i.isEven ? Colors.white : accent)
+                  .withOpacity((0.25 + 0.55 * tw).clamp(0.0, 1.0)),
+          );
+        }
+        break;
+    }
   }
 
   void _paintTemplateArt(Canvas canvas, Size size, Rect rect) {
@@ -560,5 +720,6 @@ class _FlashCardArtPainter extends CustomPainter {
       old.template != template ||
       old.accent != accent ||
       old.borderEffect != borderEffect ||
+      old.decorativePreset != decorativePreset ||
       old.progress != progress;
 }

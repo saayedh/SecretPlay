@@ -16,8 +16,11 @@ import android.media.AudioManager
 import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.media.PlaybackParams
+import android.media.ToneGenerator
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -274,6 +277,26 @@ class MainActivity : FlutterFragmentActivity(), SensorEventListener {
         } catch (_: Exception) {}
     }
 
+    private fun playGhostTouchChime(style: String) {
+        try {
+            val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            if (am.ringerMode != AudioManager.RINGER_MODE_NORMAL) return
+            val tone = when (style) {
+                "mega_heart", "heart" -> ToneGenerator.TONE_PROP_BEEP2
+                "bolt" -> ToneGenerator.TONE_PROP_ACK
+                "spark" -> ToneGenerator.TONE_PROP_PROMPT
+                else -> ToneGenerator.TONE_PROP_BEEP
+            }
+            val tg = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 55)
+            tg.startTone(tone, 140)
+            Handler(Looper.getMainLooper()).postDelayed({
+                try {
+                    tg.release()
+                } catch (_: Exception) {}
+            }, 240L)
+        } catch (_: Exception) {}
+    }
+
     private fun showDisguisedOnlinePing(title: String, body: String) {
         try {
             // Secret signature vibration: tap-tap... buzzz (only your partner recognizes it!)
@@ -399,6 +422,11 @@ class MainActivity : FlutterFragmentActivity(), SensorEventListener {
                     vibratePattern(longArrayOf(0, 90, 85, 150))
                     result.success(true)
                 }
+                "playGhostTouchChime" -> {
+                    val style = call.argument<String>("style") ?: "default"
+                    playGhostTouchChime(style)
+                    result.success(true)
+                }
                 "configureStandbyEngine" -> {
                     val devId = call.argument<String>("deviceId") ?: ""
                     val wsBase = call.argument<String>("wsBase") ?: StealthStandbyService.DEFAULT_WS_BASE
@@ -484,6 +512,7 @@ class MainActivity : FlutterFragmentActivity(), SensorEventListener {
                     val position = call.argument<String>("position") ?: "center"
                     val durationSec = call.argument<Int>("displayDurationSec") ?: 7
                     val vibrateEnabled = call.argument<Boolean>("vibrateEnabled") ?: true
+                    val soundEnabled = call.argument<Boolean>("soundEnabled") ?: true
                     val intensity = (call.argument<Number>("effectIntensity")?.toFloat() ?: 0.85f)
                     val reducedMotion = call.argument<Boolean>("reducedMotion") ?: false
                     getSharedPreferences(StealthStandbyService.PREFS_NAME, Context.MODE_PRIVATE)
@@ -491,6 +520,7 @@ class MainActivity : FlutterFragmentActivity(), SensorEventListener {
                         .putString(StealthStandbyService.KEY_GT_POSITION, position)
                         .putInt(StealthStandbyService.KEY_GT_DURATION, durationSec)
                         .putBoolean(StealthStandbyService.KEY_GT_VIBRATE, vibrateEnabled)
+                        .putBoolean(StealthStandbyService.KEY_GT_SOUND, soundEnabled)
                         .putFloat(StealthStandbyService.KEY_GT_INTENSITY, intensity)
                         .putBoolean(StealthStandbyService.KEY_GT_REDUCED_MOTION, reducedMotion)
                         .apply()

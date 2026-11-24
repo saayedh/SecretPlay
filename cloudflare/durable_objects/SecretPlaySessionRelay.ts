@@ -495,6 +495,7 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
         hologramStyle: typeof body.hologramStyle === 'string' ? body.hologramStyle : '',
         cardDataJson: typeof body.cardDataJson === 'string' ? body.cardDataJson : '',
         stickerId: typeof body.stickerId === 'string' ? body.stickerId : '',
+        reactionType: typeof body.reactionType === 'string' ? body.reactionType : '',
         roomToken: typeof body.roomToken === 'string' ? body.roomToken : '',
         timestamp: now,
       };
@@ -1601,14 +1602,14 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
       const existing = [...cur] as unknown as AdminDeviceRow[];
 
       const latestUpdate = {
-        latestVersion: cfg.latest_version || '2.0.0',
-        latestBuild: cfg.latest_build || 8,
+        latestVersion: cfg.latest_version || '2.1.0',
+        latestBuild: cfg.latest_build || 9,
         downloadUrl:
           cfg.download_url ||
           'https://github.com/saayedh/SecretPlay/releases/download/v1.0.0/app-arm64-v8a-release.apk',
         releaseNotes:
           cfg.release_notes ||
-          'نسخه ۲.۰ SecretPlay (Ghost Touch Ultimate): بیش از ۶۶ استیکر وکتور زنده، استودیو طراحی حرفه‌ای، کارت هولوگرافیک ۱۲ قالبه و افکت‌های تعاملی!',
+          'نسخه ۲.۱ SecretPlay (Ghost Touch Complete): لایه‌های طراحی و ۲۸ شکل وکتور، رنگ متن و تزئینات کارت، افکت ۸سبکی واقعی روی صفحه قفل، واکنش‌های متمایز و افکت صوتی!',
       };
 
       if (existing.length === 0) {
@@ -1713,14 +1714,14 @@ export class SecretPlaySessionRelay extends DurableObject<Env> {
     if (path === '/internal-admin/version' && request.method === 'GET') {
       const cfg = this.getAdminConfig();
       return Response.json({
-        latestVersion: cfg.latest_version || '2.0.0',
-        latestBuild: cfg.latest_build || 8,
+        latestVersion: cfg.latest_version || '2.1.0',
+        latestBuild: cfg.latest_build || 9,
         downloadUrl:
           cfg.download_url ||
           'https://github.com/saayedh/SecretPlay/releases/download/v1.0.0/app-arm64-v8a-release.apk',
         releaseNotes:
           cfg.release_notes ||
-          'نسخه ۲.۰ SecretPlay (Ghost Touch Ultimate): بیش از ۶۶ استیکر وکتور زنده، استودیو طراحی حرفه‌ای، کارت هولوگرافیک ۱۲ قالبه و افکت‌های تعاملی!',
+          'نسخه ۲.۱ SecretPlay (Ghost Touch Complete): لایه‌های طراحی و ۲۸ شکل وکتور، رنگ متن و تزئینات کارت، افکت ۸سبکی واقعی روی صفحه قفل، واکنش‌های متمایز و افکت صوتی!',
         timestamp: now,
       });
     }

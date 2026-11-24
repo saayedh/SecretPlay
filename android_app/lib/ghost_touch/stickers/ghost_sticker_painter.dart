@@ -1,3 +1,5 @@
+import 'dart:collection';
+import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
@@ -20,6 +22,47 @@ class GhostStickerArtwork extends StatefulWidget {
     this.reducedMotion = false,
     this.intensity = 1.0,
   });
+
+  static final LinkedHashMap<String, String> _pngBase64Cache =
+      LinkedHashMap<String, String>();
+
+  /// Renders a crisp vector sticker snapshot as base64 PNG for native Android overlays.
+  static Future<String?> renderStickerToPngBase64(
+    GhostStickerDef sticker, {
+    int sizePx = 224,
+  }) async {
+    final cacheKey = '${sticker.id}_$sizePx';
+    final cached = _pngBase64Cache[cacheKey];
+    if (cached != null) return cached;
+
+    ui.Picture? picture;
+    ui.Image? image;
+    try {
+      final recorder = ui.PictureRecorder();
+      final canvas = Canvas(recorder);
+      GhostStickerPainter(
+        sticker: sticker,
+        progress: 0.25,
+        intensity: 1.0,
+        reducedMotion: false,
+      ).paint(canvas, Size(sizePx.toDouble(), sizePx.toDouble()));
+      picture = recorder.endRecording();
+      image = await picture.toImage(sizePx, sizePx);
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      if (byteData == null) return null;
+      final b64 = base64Encode(byteData.buffer.asUint8List());
+      if (_pngBase64Cache.length >= 24) {
+        _pngBase64Cache.remove(_pngBase64Cache.keys.first);
+      }
+      _pngBase64Cache[cacheKey] = b64;
+      return b64;
+    } catch (_) {
+      return null;
+    } finally {
+      image?.dispose();
+      picture?.dispose();
+    }
+  }
 
   @override
   State<GhostStickerArtwork> createState() => _GhostStickerArtworkState();

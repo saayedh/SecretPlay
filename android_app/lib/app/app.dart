@@ -5,9 +5,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../core/constants.dart';
+import '../core/relay_directory_service.dart';
 import '../core/theme.dart';
 import '../chat/chat_message.dart';
 import '../chat/widgets/flash_hologram_overlay.dart';
+import '../ghost_touch/ghost_touch_theme.dart';
 import '../ghost_touch/models/hologram_models.dart';
 import '../ghost_touch/stickers/ghost_sticker_catalog.dart';
 import '../ghost_touch/stickers/ghost_sticker_painter.dart';
@@ -39,7 +41,7 @@ class _SecretPlayAppState extends ConsumerState<SecretPlayApp> with WidgetsBindi
   int _inboxGen = 0;
   final Set<String> _seenInboxEventIds = {};
 
-  bool _globalHeartbeatVisible = false;
+  GhostReactionMeta? _globalReactionMeta;
   String? _globalStealthBannerText;
   EphemeralChatMessage? _globalFlashMessage;
 
@@ -140,17 +142,29 @@ class _SecretPlayAppState extends ConsumerState<SecretPlayApp> with WidgetsBindi
         nativeOverlayHandlesIt = status['canDrawOverlays'] == true;
       }
 
-      if (eventType == 'heartbeat_pulse') {
+      final prefs = GhostTouchPreferencesService.instance.current;
+
+      if (eventType == 'heartbeat_pulse' || eventType == 'reaction_burst') {
         if (nativeOverlayHandlesIt || !mounted) return;
-        _autoLockService.triggerHeartbeatVibration();
+        final meta = eventType == 'reaction_burst'
+            ? GhostReactionMeta.of(map['reactionType'] as String?)
+            : GhostReactionMeta.megaHeart;
+        if (prefs.vibrateEnabled) {
+          _autoLockService.triggerHeartbeatVibration();
+        }
+        if (prefs.soundEnabled) {
+          unawaited(_autoLockService.playGhostTouchChime(style: meta.key));
+        }
         _heartbeatHideTimer?.cancel();
-        setState(() => _globalHeartbeatVisible = true);
+        setState(() => _globalReactionMeta = meta);
         _heartbeatHideTimer = Timer(const Duration(milliseconds: 2200), () {
-          if (mounted) setState(() => _globalHeartbeatVisible = false);
+          if (mounted) setState(() => _globalReactionMeta = null);
         });
       } else if (eventType == 'stealth_ping') {
         if (nativeOverlayHandlesIt || !mounted) return;
-        _autoLockService.triggerHeartbeatVibration();
+        if (prefs.vibrateEnabled) {
+          _autoLockService.triggerHeartbeatVibration();
+        }
         _stealthPillHideTimer?.cancel();
         setState(() => _globalStealthBannerText = '🎮 Cyber Circuit • جایزه الماس روزانه آماده است! 💎');
         _stealthPillHideTimer = Timer(const Duration(seconds: 4), () {
@@ -158,6 +172,12 @@ class _SecretPlayAppState extends ConsumerState<SecretPlayApp> with WidgetsBindi
         });
       } else if (eventType == 'flash_hologram') {
         if (nativeOverlayHandlesIt || !mounted) return;
+        if (prefs.vibrateEnabled) {
+          _autoLockService.triggerHeartbeatVibration();
+        }
+        if (prefs.soundEnabled) {
+          unawaited(_autoLockService.playGhostTouchChime(style: 'entrance'));
+        }
         final media = map['mediaBase64'] as String?;
         final body = map['body'] as String? ?? map['title'] as String? ?? '';
         final emoji = map['emoji'] as String? ?? '';
@@ -168,10 +188,10 @@ class _SecretPlayAppState extends ConsumerState<SecretPlayApp> with WidgetsBindi
             GhostTouchPreferencesService.instance.current.displayDurationSec;
         final cType = (cardDataJson != null && cardDataJson.isNotEmpty)
             ? ChatContentType.flashCard
-            : ((media != null && media.isNotEmpty)
-                ? ChatContentType.drawing
-                : ((stickerId != null && stickerId.isNotEmpty)
-                    ? ChatContentType.sticker
+            : ((stickerId != null && stickerId.isNotEmpty)
+                ? ChatContentType.sticker
+                : ((media != null && media.isNotEmpty)
+                    ? ChatContentType.drawing
                     : ChatContentType.text));
         final msg = EphemeralChatMessage(
           id: eventId.isNotEmpty ? eventId : null,
@@ -308,7 +328,7 @@ class _SecretPlayAppState extends ConsumerState<SecretPlayApp> with WidgetsBindi
                   ),
                 ),
               ),
-            if (_globalHeartbeatVisible && !_obscureScreen)
+            if (_globalReactionMeta != null && !_obscureScreen)
               Positioned.fill(
                 child: IgnorePointer(
                   child: Material(
@@ -320,14 +340,14 @@ class _SecretPlayAppState extends ConsumerState<SecretPlayApp> with WidgetsBindi
                           shape: BoxShape.circle,
                           gradient: RadialGradient(
                             colors: [
-                              const Color(0xFFFF3D9A).withOpacity(0.55),
-                              const Color(0xFFB45CFF).withOpacity(0.16),
+                              _globalReactionMeta!.color.withOpacity(0.55),
+                              GhostPalette.neonPurple.withOpacity(0.16),
                               Colors.transparent,
                             ],
                           ),
                           boxShadow: [
                             BoxShadow(
-                              color: const Color(0xFFFF3D9A).withOpacity(0.45),
+                              color: _globalReactionMeta!.color.withOpacity(0.45),
                               blurRadius: 48,
                               spreadRadius: 12,
                             ),
@@ -337,15 +357,16 @@ class _SecretPlayAppState extends ConsumerState<SecretPlayApp> with WidgetsBindi
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             GhostStickerArtwork(
-                              sticker: GhostStickerCatalog.findById('love_beating_heart'),
+                              sticker: GhostStickerCatalog.findById(
+                                  _globalReactionMeta!.stickerId),
                               size: 112,
                               reducedMotion: GhostTouchPreferencesService
                                   .instance.current.reducedMotion,
                             ),
                             const SizedBox(height: 6),
-                            const Text(
-                              'تپش قلب زنده',
-                              style: TextStyle(
+                            Text(
+                              _globalReactionMeta!.titleFa,
+                              style: const TextStyle(
                                 color: Colors.white,
                                 fontSize: 13,
                                 fontWeight: FontWeight.bold,
@@ -371,6 +392,54 @@ class _SecretPlayAppState extends ConsumerState<SecretPlayApp> with WidgetsBindi
                       : null,
                   autoVanishSeconds: _globalFlashMessage!.displayDurationSec ??
                       GhostTouchPreferencesService.instance.current.displayDurationSec,
+                  onQuickReaction: (reactionKey) {
+                    final target = _globalFlashMessage?.senderDeviceId;
+                    if (target == null ||
+                        target.isEmpty ||
+                        target == 'peer' ||
+                        _myDeviceId == null) {
+                      return;
+                    }
+                    final meta = GhostReactionMeta.of(reactionKey);
+                    unawaited(RelayDirectoryService.pushInboxEvent(
+                      recipientDeviceId: target,
+                      senderDeviceId: _myDeviceId!,
+                      eventType: 'reaction_burst',
+                      reactionType: meta.key,
+                      title: meta.titleFa,
+                      body: meta.titleFa,
+                      colorHex: GhostPalette.toHex(meta.color),
+                      stickerId: meta.stickerId,
+                    ));
+                  },
+                  onQuickStickerReply: (stId) {
+                    final target = _globalFlashMessage?.senderDeviceId;
+                    final st = GhostStickerCatalog.findById(stId);
+                    if (target != null &&
+                        target.isNotEmpty &&
+                        target != 'peer' &&
+                        _myDeviceId != null) {
+                      unawaited(() async {
+                        final pngB64 = await GhostStickerArtwork
+                            .renderStickerToPngBase64(st);
+                        await RelayDirectoryService.pushInboxEvent(
+                          recipientDeviceId: target,
+                          senderDeviceId: _myDeviceId!,
+                          eventType: 'flash_hologram',
+                          emoji: st.fallbackGlyph,
+                          title: st.titleFa,
+                          body: st.titleFa,
+                          colorHex: GhostPalette.toHex(st.primaryColor),
+                          mediaBase64: pngB64,
+                          flashSeconds: GhostTouchPreferencesService
+                              .instance.current.displayDurationSec,
+                          hologramStyle: HologramStyle.floatingSticker.name,
+                          stickerId: st.id,
+                        );
+                      }());
+                    }
+                    if (mounted) setState(() => _globalFlashMessage = null);
+                  },
                   onDismiss: () {
                     if (mounted) setState(() => _globalFlashMessage = null);
                   },

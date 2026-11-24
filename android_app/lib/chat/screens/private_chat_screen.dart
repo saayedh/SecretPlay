@@ -20,6 +20,7 @@ import '../chat_session.dart';
 import '../../ghost_touch/cards/holographic_card_designer.dart';
 import '../../ghost_touch/cards/holographic_card_renderer.dart';
 import '../../ghost_touch/drawing/ultimate_drawing_studio.dart';
+import '../../ghost_touch/ghost_touch_theme.dart';
 import '../../ghost_touch/models/hologram_models.dart';
 import '../../ghost_touch/stickers/ghost_sticker_catalog.dart';
 import '../../ghost_touch/stickers/ghost_sticker_painter.dart';
@@ -87,6 +88,7 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
   StreamSubscription? _updateSub;
   bool _isShowingIncomingCall = false;
   bool _showHeartbeatWave = false;
+  GhostReactionMeta _activeReactionMeta = GhostReactionMeta.megaHeart;
   Timer? _heartbeatWaveTimer;
 
   @override
@@ -342,10 +344,40 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
         }
         return;
       } else if (signalType == 'heartbeat_pulse') {
-        AutoLockService().triggerHeartbeatVibration();
+        final prefs = GhostTouchPreferencesService.instance.current;
+        if (prefs.vibrateEnabled) {
+          AutoLockService().triggerHeartbeatVibration();
+        }
+        if (prefs.soundEnabled) {
+          unawaited(AutoLockService().playGhostTouchChime(style: 'mega_heart'));
+        }
         _heartbeatWaveTimer?.cancel();
         if (mounted) {
-          setState(() => _showHeartbeatWave = true);
+          setState(() {
+            _activeReactionMeta = GhostReactionMeta.megaHeart;
+            _showHeartbeatWave = true;
+          });
+        }
+        _heartbeatWaveTimer = Timer(const Duration(milliseconds: 2200), () {
+          if (mounted) setState(() => _showHeartbeatWave = false);
+        });
+        return;
+      } else if (signalType == 'ghost_reaction') {
+        final prefs = GhostTouchPreferencesService.instance.current;
+        final rType = payload['reactionType'] as String?;
+        final meta = GhostReactionMeta.of(rType);
+        if (prefs.vibrateEnabled) {
+          AutoLockService().triggerHeartbeatVibration();
+        }
+        if (prefs.soundEnabled) {
+          unawaited(AutoLockService().playGhostTouchChime(style: meta.key));
+        }
+        _heartbeatWaveTimer?.cancel();
+        if (mounted) {
+          setState(() {
+            _activeReactionMeta = meta;
+            _showHeartbeatWave = true;
+          });
         }
         _heartbeatWaveTimer = Timer(const Duration(milliseconds: 2200), () {
           if (mounted) setState(() => _showHeartbeatWave = false);
@@ -588,6 +620,21 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
         final title = contentType == ChatContentType.flashCard
             ? '⚡ کارت هولوگرافیک فوری'
             : (st != null ? st.titleFa : '⚡ پیام هولوگرافیک فوری');
+
+        String? inboxMediaBase64;
+        if (contentType == ChatContentType.drawing ||
+            contentType == ChatContentType.image) {
+          inboxMediaBase64 = mediaBase64;
+        } else if (st != null) {
+          inboxMediaBase64 =
+              await GhostStickerArtwork.renderStickerToPngBase64(st.ghostDef);
+        } else if (parsedCard?.stickerId != null &&
+            parsedCard!.stickerId!.isNotEmpty) {
+          inboxMediaBase64 = await GhostStickerArtwork.renderStickerToPngBase64(
+            GhostStickerCatalog.findById(parsedCard.stickerId),
+          );
+        }
+
         unawaited(RelayDirectoryService.pushInboxEvent(
           recipientDeviceId: targetId,
           senderDeviceId: _myDeviceId!,
@@ -596,10 +643,7 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
           title: title,
           body: text,
           colorHex: colorHex,
-          mediaBase64: (contentType == ChatContentType.drawing ||
-                  contentType == ChatContentType.image)
-              ? mediaBase64
-              : null,
+          mediaBase64: inboxMediaBase64,
           flashSeconds: displayDurationSec ?? prefs.displayDurationSec,
           roomToken: _activeToken,
           hologramStyle: hologramStyle ?? prefs.defaultStyle.name,
@@ -844,10 +888,17 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
         roomToken: _activeToken,
       ));
     }
-    AutoLockService().triggerHeartbeatVibration();
+    final prefs = GhostTouchPreferencesService.instance.current;
+    if (prefs.vibrateEnabled) {
+      AutoLockService().triggerHeartbeatVibration();
+    }
+    if (prefs.soundEnabled) {
+      unawaited(AutoLockService().playGhostTouchChime(style: 'mega_heart'));
+    }
     _heartbeatWaveTimer?.cancel();
     if (mounted) {
       setState(() {
+        _activeReactionMeta = GhostReactionMeta.megaHeart;
         _showHeartbeatWave = true;
         _showAttachDock = false;
       });
@@ -870,6 +921,58 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
       );
     }
     _heartbeatWaveTimer = Timer(const Duration(milliseconds: 1500), () {
+      if (mounted) setState(() => _showHeartbeatWave = false);
+    });
+  }
+
+  Future<void> _sendGhostReaction(String reactionKey) async {
+    if (_myDeviceId == null) return;
+    final meta = GhostReactionMeta.of(reactionKey);
+    final peerId = await _resolvePeerDeviceId();
+    final wsClient = ref.read(wsClientProvider);
+    final rawEpoch = wsClient.sessionEpoch;
+    final epoch = (rawEpoch != null && rawEpoch.isNotEmpty)
+        ? rawEpoch
+        : 'offline-$_activeToken';
+    wsClient.sendRaw({
+      'type': 'signal',
+      'version': 1,
+      'signalType': 'ghost_reaction',
+      'reactionType': meta.key,
+      'senderDeviceId': _myDeviceId,
+      'recipientDeviceId': peerId ?? _peerDeviceId ?? 'peer',
+      'sessionEpoch': epoch,
+      'encryptedPayload': '',
+      'iv': '',
+      'authTag': '',
+      'seq': 0,
+      'timestamp': DateTime.now().millisecondsSinceEpoch,
+    });
+    if (peerId != null) {
+      unawaited(RelayDirectoryService.pushInboxEvent(
+        recipientDeviceId: peerId,
+        senderDeviceId: _myDeviceId!,
+        eventType: 'reaction_burst',
+        reactionType: meta.key,
+        title: meta.titleFa,
+        body: meta.titleFa,
+        colorHex: GhostPalette.toHex(meta.color),
+        stickerId: meta.stickerId,
+        roomToken: _activeToken,
+      ));
+    }
+    final prefs = GhostTouchPreferencesService.instance.current;
+    if (prefs.vibrateEnabled) {
+      AutoLockService().triggerHeartbeatVibration();
+    }
+    _heartbeatWaveTimer?.cancel();
+    if (mounted) {
+      setState(() {
+        _activeReactionMeta = meta;
+        _showHeartbeatWave = true;
+      });
+    }
+    _heartbeatWaveTimer = Timer(const Duration(milliseconds: 1700), () {
       if (mounted) setState(() => _showHeartbeatWave = false);
     });
   }
@@ -1555,7 +1658,7 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
                                   .instance.current.displayDurationSec,
                       onDismiss: () => setState(() => _activeFlashHologram = null),
                       onQuickReplySketch: () => _openSketchPad(initialFlash: true),
-                      onQuickReaction: (_) => _sendHeartbeatPulse(),
+                      onQuickReaction: _sendGhostReaction,
                       onQuickStickerReply: (stId) {
                         final st = GhostStickerCatalog.findById(stId);
                         _sendWithAutoLookup(
@@ -1583,14 +1686,14 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
                               shape: BoxShape.circle,
                               gradient: RadialGradient(
                                 colors: [
-                                  const Color(0xFFFF3D9A).withOpacity(0.55),
-                                  const Color(0xFFB45CFF).withOpacity(0.14),
+                                  _activeReactionMeta.color.withOpacity(0.55),
+                                  GhostPalette.neonPurple.withOpacity(0.14),
                                   Colors.transparent,
                                 ],
                               ),
                               boxShadow: [
                                 BoxShadow(
-                                  color: const Color(0xFFFF3D9A).withOpacity(0.45),
+                                  color: _activeReactionMeta.color.withOpacity(0.45),
                                   blurRadius: 48,
                                   spreadRadius: 12,
                                 ),
@@ -1601,14 +1704,17 @@ class _PrivateChatScreenState extends ConsumerState<PrivateChatScreen> {
                               children: [
                                 GhostStickerArtwork(
                                   sticker: GhostStickerCatalog.findById(
-                                      'love_beating_heart'),
+                                      _activeReactionMeta.stickerId),
                                   size: 112,
                                   reducedMotion: GhostTouchPreferencesService
                                       .instance.current.reducedMotion,
                                 ),
                                 const SizedBox(height: 6),
                                 Text(
-                                  s.tr('تپش قلب زنده', 'Live Heartbeat'),
+                                  s.tr(
+                                    _activeReactionMeta.titleFa,
+                                    _activeReactionMeta.titleEn,
+                                  ),
                                   style: const TextStyle(
                                     color: Colors.white,
                                     fontSize: 13,

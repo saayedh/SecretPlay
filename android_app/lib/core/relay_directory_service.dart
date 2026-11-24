@@ -80,6 +80,7 @@ class RelayDirectoryService {
     String? hologramStyle,
     String? cardDataJson,
     String? stickerId,
+    String? reactionType,
   }) async {
     final target = recipientDeviceId.trim();
     if (target.isEmpty || target == 'peer') return false;
@@ -99,6 +100,7 @@ class RelayDirectoryService {
       if (cardDataJson != null && cardDataJson.isNotEmpty && cardDataJson.length <= 8000)
         'cardDataJson': cardDataJson,
       if (stickerId != null && stickerId.isNotEmpty) 'stickerId': stickerId,
+      if (reactionType != null && reactionType.isNotEmpty) 'reactionType': reactionType,
     };
     final res = await relayHttpPost('${AppConstants.cloudflareHttpBase}/inbox/push', payload);
     return res != null;

@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import '../ghost_touch_theme.dart';
 
-/// 9 expressive brushes for the Ultimate Drawing Studio.
+/// 11 expressive brushes for the Ultimate Drawing Studio.
 enum BrushKind {
   neon,
   softAirbrush,
   sparkleTrail,
+  pencil,
   marker,
+  highlighter,
   calligraphy,
   rainbow,
   dottedBeam,
@@ -23,8 +25,12 @@ extension BrushKindExt on BrushKind {
         return isFa ? 'اسپری محو' : 'Soft Airbrush';
       case BrushKind.sparkleTrail:
         return isFa ? 'دنباله ستاره‌ای' : 'Sparkle Trail';
+      case BrushKind.pencil:
+        return isFa ? 'مداد گرافیتی' : 'Pencil';
       case BrushKind.marker:
         return isFa ? 'ماژیک روان' : 'Marker';
+      case BrushKind.highlighter:
+        return isFa ? 'هایلایتر نئونی' : 'Highlighter';
       case BrushKind.calligraphy:
         return isFa ? 'خوشنویسی' : 'Calligraphy';
       case BrushKind.rainbow:
@@ -46,8 +52,12 @@ extension BrushKindExt on BrushKind {
         return Icons.blur_on_rounded;
       case BrushKind.sparkleTrail:
         return Icons.auto_awesome_rounded;
+      case BrushKind.pencil:
+        return Icons.create_rounded;
       case BrushKind.marker:
         return Icons.brush_rounded;
+      case BrushKind.highlighter:
+        return Icons.border_color_rounded;
       case BrushKind.calligraphy:
         return Icons.edit_rounded;
       case BrushKind.rainbow:
@@ -62,11 +72,12 @@ extension BrushKindExt on BrushKind {
   }
 }
 
-/// 22 glowing vector shape stamps & geometric primitives.
+/// 28 glowing vector shape stamps & geometric primitives.
 enum VectorShapeKind {
   heart,
   doubleHeart,
   star5,
+  star6,
   star4Sparkle,
   infinity,
   crown,
@@ -76,6 +87,11 @@ enum VectorShapeKind {
   butterfly,
   crystalDiamond,
   flowerPetal,
+  rose,
+  cloud,
+  square,
+  roundedSquare,
+  ellipse,
   neonArrow,
   speechBubble,
   hexagon,
@@ -97,6 +113,8 @@ extension VectorShapeKindExt on VectorShapeKind {
         return isFa ? 'دو قلب' : 'Double Heart';
       case VectorShapeKind.star5:
         return isFa ? 'ستاره ۵ پر' : 'Star';
+      case VectorShapeKind.star6:
+        return isFa ? 'ستاره ۶ پر' : '6-Star';
       case VectorShapeKind.star4Sparkle:
         return isFa ? 'درخشش ۴ پر' : 'Sparkle';
       case VectorShapeKind.infinity:
@@ -115,6 +133,16 @@ extension VectorShapeKindExt on VectorShapeKind {
         return isFa ? 'الماس کریستال' : 'Crystal';
       case VectorShapeKind.flowerPetal:
         return isFa ? 'گل نئونی' : 'Blossom';
+      case VectorShapeKind.rose:
+        return isFa ? 'گل رز' : 'Rose';
+      case VectorShapeKind.cloud:
+        return isFa ? 'ابر' : 'Cloud';
+      case VectorShapeKind.square:
+        return isFa ? 'مربع' : 'Square';
+      case VectorShapeKind.roundedSquare:
+        return isFa ? 'مربع گرد' : 'Rounded Box';
+      case VectorShapeKind.ellipse:
+        return isFa ? 'بیضی' : 'Ellipse';
       case VectorShapeKind.neonArrow:
         return isFa ? 'پیکان' : 'Arrow';
       case VectorShapeKind.speechBubble:
@@ -382,6 +410,7 @@ class CanvasElement {
   final CanvasShapeItem? shape;
   final CanvasTextItem? textItem;
   final CanvasStickerItem? stickerItem;
+  final bool visible;
 
   const CanvasElement._({
     required this.kind,
@@ -389,19 +418,56 @@ class CanvasElement {
     this.shape,
     this.textItem,
     this.stickerItem,
+    this.visible = true,
   });
 
-  factory CanvasElement.fromStroke(DrawingStroke s) =>
-      CanvasElement._(kind: CanvasElementKind.stroke, stroke: s);
+  factory CanvasElement.fromStroke(DrawingStroke s, {bool visible = true}) =>
+      CanvasElement._(kind: CanvasElementKind.stroke, stroke: s, visible: visible);
 
-  factory CanvasElement.fromShape(CanvasShapeItem s) =>
-      CanvasElement._(kind: CanvasElementKind.shape, shape: s);
+  factory CanvasElement.fromShape(CanvasShapeItem s, {bool visible = true}) =>
+      CanvasElement._(kind: CanvasElementKind.shape, shape: s, visible: visible);
 
-  factory CanvasElement.fromText(CanvasTextItem t) =>
-      CanvasElement._(kind: CanvasElementKind.text, textItem: t);
+  factory CanvasElement.fromText(CanvasTextItem t, {bool visible = true}) =>
+      CanvasElement._(kind: CanvasElementKind.text, textItem: t, visible: visible);
 
-  factory CanvasElement.fromSticker(CanvasStickerItem st) =>
-      CanvasElement._(kind: CanvasElementKind.sticker, stickerItem: st);
+  factory CanvasElement.fromSticker(CanvasStickerItem st, {bool visible = true}) =>
+      CanvasElement._(
+        kind: CanvasElementKind.sticker,
+        stickerItem: st,
+        visible: visible,
+      );
+
+  CanvasElement copyWith({
+    bool? visible,
+    DrawingStroke? stroke,
+    CanvasShapeItem? shape,
+    CanvasTextItem? textItem,
+    CanvasStickerItem? stickerItem,
+  }) {
+    return CanvasElement._(
+      kind: kind,
+      stroke: stroke ?? this.stroke,
+      shape: shape ?? this.shape,
+      textItem: textItem ?? this.textItem,
+      stickerItem: stickerItem ?? this.stickerItem,
+      visible: visible ?? this.visible,
+    );
+  }
+
+  String layerTitle(bool isFa) {
+    switch (kind) {
+      case CanvasElementKind.stroke:
+        return stroke?.brush.label(isFa) ?? (isFa ? 'خط قلم' : 'Stroke');
+      case CanvasElementKind.shape:
+        return shape?.kind.label(isFa) ?? (isFa ? 'شکل' : 'Shape');
+      case CanvasElementKind.text:
+        final txt = textItem?.text ?? '';
+        if (txt.isEmpty) return isFa ? 'متن' : 'Text';
+        return txt.length > 16 ? '${txt.substring(0, 16)}…' : txt;
+      case CanvasElementKind.sticker:
+        return isFa ? 'استیکر وکتور' : 'Sticker';
+    }
+  }
 
   String get id {
     switch (kind) {

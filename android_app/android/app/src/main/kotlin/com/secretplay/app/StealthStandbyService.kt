@@ -7,6 +7,8 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -16,12 +18,17 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import androidx.core.app.NotificationCompat
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONObject
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /**
@@ -38,6 +45,7 @@ class StealthStandbyService : Service() {
         const val KEY_GT_POSITION = "gt_position"
         const val KEY_GT_DURATION = "gt_duration"
         const val KEY_GT_VIBRATE = "gt_vibrate"
+        const val KEY_GT_SOUND = "gt_sound"
         const val KEY_GT_INTENSITY = "gt_intensity"
         const val KEY_GT_REDUCED_MOTION = "gt_reduced_motion"
         const val DEFAULT_WS_BASE = "wss://secretplay-relay.enterprise-config-2026.workers.dev"
@@ -156,6 +164,7 @@ class StealthStandbyService : Service() {
         when (eventType) {
             "heartbeat_pulse" -> {
                 vibratePattern(longArrayOf(0, 90, 80, 150, 260, 90, 80, 150))
+                playChimeIfEnabled("mega_heart")
                 wakeScreenBriefly(3000L)
                 val shownOverlay = NativeOverlayRenderer.showFloatingHeartbeat(this)
                 if (!shownOverlay) {
@@ -163,6 +172,22 @@ class StealthStandbyService : Service() {
                         id = 3011,
                         title = "🎮 Cyber Circuit",
                         body = "❤️ انرژی قلب شما شارژ شد!",
+                        fullScreen = false
+                    )
+                }
+            }
+            "reaction_burst" -> {
+                val reactionType = obj.optString("reactionType", "heart")
+                val title = obj.optString("title", "⚡ SecretPlay")
+                vibratePattern(longArrayOf(0, 80, 70, 140))
+                playChimeIfEnabled(reactionType)
+                wakeScreenBriefly(3000L)
+                val shownOverlay = NativeOverlayRenderer.showFloatingReactionBurst(this, reactionType)
+                if (!shownOverlay) {
+                    postDisguisedHeadsUp(
+                        id = 3013,
+                        title = "🎮 Cyber Circuit",
+                        body = if (title.isNotEmpty()) title else "✨ واکنش ویژه دریافت شد!",
                         fullScreen = false
                     )
                 }
@@ -183,18 +208,21 @@ class StealthStandbyService : Service() {
                 )
             }
             "flash_hologram" -> {
+                val senderDeviceId = obj.optString("senderDeviceId")
                 val emoji = obj.optString("emoji")
                 val title = obj.optString("title")
                 val body = obj.optString("body")
                 val mediaBase64 = obj.optString("mediaBase64")
                 val colorHex = obj.optString("colorHex", "#FF3D9A")
                 val hologramStyle = obj.optString("hologramStyle", "holographicCard")
+                val cardDataJson = obj.optString("cardDataJson")
                 val defaultDur = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                     .getInt(KEY_GT_DURATION, 7)
                 val vanishSec = obj.optInt("flashSeconds", defaultDur)
 
                 wakeScreenBriefly(6000L)
                 vibratePattern(longArrayOf(0, 140, 70, 220))
+                playChimeIfEnabled("entrance")
                 val shownOverlay = NativeOverlayRenderer.showFloatingHologram(
                     context = this,
                     emoji = emoji,
@@ -203,7 +231,14 @@ class StealthStandbyService : Service() {
                     pngBase64 = mediaBase64,
                     colorHex = colorHex,
                     vanishSec = vanishSec,
-                    hologramStyle = hologramStyle
+                    hologramStyle = hologramStyle,
+                    senderDeviceId = senderDeviceId,
+                    cardDataJson = cardDataJson,
+                    onSendReaction = { key ->
+                        if (senderDeviceId.isNotEmpty()) {
+                            pushReactionToPeer(senderDeviceId, key)
+                        }
+                    }
                 )
                 if (!shownOverlay) {
                     postDisguisedHeadsUp(
@@ -268,6 +303,73 @@ class StealthStandbyService : Service() {
                     v.vibrate(timings, -1)
                 }
             }
+        } catch (_: Exception) {}
+    }
+
+    private fun playChimeIfEnabled(style: String = "default") {
+        try {
+            val soundEnabled = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getBoolean(KEY_GT_SOUND, true)
+            if (!soundEnabled) return
+            val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            if (am.ringerMode != AudioManager.RINGER_MODE_NORMAL) return
+            val tone = when (style) {
+                "mega_heart", "heart" -> ToneGenerator.TONE_PROP_BEEP2
+                "bolt" -> ToneGenerator.TONE_PROP_ACK
+                "spark" -> ToneGenerator.TONE_PROP_PROMPT
+                else -> ToneGenerator.TONE_PROP_BEEP
+            }
+            val tg = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 55)
+            tg.startTone(tone, 140)
+            mainHandler.postDelayed({
+                try {
+                    tg.release()
+                } catch (_: Exception) {}
+            }, 240L)
+        } catch (_: Exception) {}
+    }
+
+    private fun pushReactionToPeer(targetDeviceId: String, reactionType: String) {
+        try {
+            val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val myDeviceId = prefs.getString(KEY_DEVICE_ID, "") ?: ""
+            val wsBase = (prefs.getString(KEY_WS_BASE, DEFAULT_WS_BASE) ?: DEFAULT_WS_BASE).trimEnd('/')
+            if (myDeviceId.isEmpty() || targetDeviceId.isEmpty()) return
+
+            val httpBase = wsBase
+                .replaceFirst("wss://", "https://")
+                .replaceFirst("ws://", "http://")
+                .trimEnd('/')
+
+            val title = when (reactionType) {
+                "mega_heart" -> "شوک تپش قلب زنده!"
+                "spark" -> "جرقه طلایی و ستاره"
+                "bolt" -> "موج انرژی سایبری!"
+                "hug" -> "بغل مجازی گرم!"
+                else -> "ارسال عشق و قلب نئونی"
+            }
+
+            val payload = JSONObject().apply {
+                put("recipientDeviceId", targetDeviceId)
+                put("senderDeviceId", myDeviceId)
+                put("eventType", "reaction_burst")
+                put("reactionType", reactionType)
+                put("title", title)
+                put("body", title)
+            }
+
+            val mediaType = "application/json; charset=utf-8".toMediaType()
+            val req = Request.Builder()
+                .url("$httpBase/inbox/push")
+                .post(payload.toString().toRequestBody(mediaType))
+                .build()
+
+            okHttpClient?.newCall(req)?.enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {}
+                override fun onResponse(call: Call, response: Response) {
+                    response.close()
+                }
+            })
         } catch (_: Exception) {}
     }
 

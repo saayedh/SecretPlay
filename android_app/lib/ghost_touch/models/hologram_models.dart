@@ -493,3 +493,82 @@ class GhostTouchPreferencesService {
     await update(current.copyWith(signatureStickers: curr));
   }
 }
+
+class GhostReactionMeta {
+  final String key;
+  final String titleFa;
+  final String titleEn;
+  final Color color;
+  final IconData icon;
+  final String stickerId;
+
+  const GhostReactionMeta({
+    required this.key,
+    required this.titleFa,
+    required this.titleEn,
+    required this.color,
+    required this.icon,
+    required this.stickerId,
+  });
+
+  static const GhostReactionMeta megaHeart = GhostReactionMeta(
+    key: 'mega_heart',
+    titleFa: 'شوک تپش قلب زنده!',
+    titleEn: 'Mega Heartbeat Shock!',
+    color: GhostPalette.neonPink,
+    icon: Icons.favorite_rounded,
+    stickerId: 'love_beating_heart',
+  );
+
+  static const GhostReactionMeta heart = GhostReactionMeta(
+    key: 'heart',
+    titleFa: 'ارسال عشق و قلب نئونی',
+    titleEn: 'Glowing Heart Love',
+    color: GhostPalette.neonPink,
+    icon: Icons.favorite_rounded,
+    stickerId: 'love_glowing_heart',
+  );
+
+  static const GhostReactionMeta spark = GhostReactionMeta(
+    key: 'spark',
+    titleFa: 'جرقه طلایی و ستاره',
+    titleEn: 'Golden Sparkle Burst',
+    color: GhostPalette.amberGold,
+    icon: Icons.auto_awesome_rounded,
+    stickerId: 'celebrate_light_burst',
+  );
+
+  static const GhostReactionMeta bolt = GhostReactionMeta(
+    key: 'bolt',
+    titleFa: 'موج انرژی سایبری!',
+    titleEn: 'Cyber Volt Surge!',
+    color: GhostPalette.electricCyan,
+    icon: Icons.bolt_rounded,
+    stickerId: 'cyber_lightning',
+  );
+
+  static const GhostReactionMeta hug = GhostReactionMeta(
+    key: 'hug',
+    titleFa: 'بغل مجازی گرم!',
+    titleEn: 'Warm Virtual Hug!',
+    color: GhostPalette.neonGreen,
+    icon: Icons.volunteer_activism_rounded,
+    stickerId: 'presence_virtual_hug',
+  );
+
+  static GhostReactionMeta of(String? key) {
+    switch (key) {
+      case 'mega_heart':
+        return megaHeart;
+      case 'spark':
+        return spark;
+      case 'bolt':
+        return bolt;
+      case 'hug':
+        return hug;
+      case 'heart':
+      default:
+        return heart;
+    }
+  }
+}
